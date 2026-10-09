@@ -61,6 +61,8 @@ def entry(folder):
 
 
 def folders():
+    if not EXTENSIONS.is_dir():
+        return []
     return sorted(p for p in EXTENSIONS.iterdir() if p.is_dir() and not p.name.startswith("."))
 
 

@@ -1,4 +1,77 @@
 {
   "schema": 1,
-  "extensions": []
+  "extensions": [
+    {
+      "id": "pomodoro",
+      "title": "Pomodoro",
+      "icon": "🍅",
+      "version": "1.0.0",
+      "description": "Focus blocks and breaks, counted down in the menu bar, with the long break every few blocks.",
+      "requires": [
+        "python3"
+      ],
+      "commands": [
+        {
+          "name": "focus",
+          "title": "Focus",
+          "mode": "no-view"
+        },
+        {
+          "name": "break",
+          "title": "Break",
+          "mode": "no-view"
+        },
+        {
+          "name": "custom",
+          "title": "Custom focus…",
+          "mode": "list"
+        },
+        {
+          "name": "pause",
+          "title": "Pause timer",
+          "mode": "no-view"
+        },
+        {
+          "name": "resume",
+          "title": "Resume timer",
+          "mode": "no-view"
+        },
+        {
+          "name": "skip",
+          "title": "Skip block",
+          "mode": "no-view"
+        },
+        {
+          "name": "stop",
+          "title": "Stop timer",
+          "mode": "no-view"
+        },
+        {
+          "name": "today",
+          "title": "Pomodoro today",
+          "mode": "detail"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": false,
+        "files": [],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "b6a4fb1fbac787fbc5d0ad433be97b46f285ca2693f8ffc2ba1b69a6b6093630",
+          "size": 3991,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "06da945c5bae1bb4b9372498de6679609c09a3435a69727f62a98a40f98f653c",
+          "size": 11631,
+          "executable": true
+        }
+      ]
+    }
+  ]
 }
