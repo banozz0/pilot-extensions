@@ -2,13 +2,13 @@
   "id": "claude-sessions",
   "title": "Claude Sessions",
   "icon": "🤖",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Your recent Claude Code sessions by folder and title; copy the command that resumes one, or open its folder.",
   "runtime": "process",
   "requires": ["python3"],
   "permissions": { "clipboard": true, "files": ["~/.claude/projects"] },
   "commands": [
     { "name": "sessions", "title": "Claude sessions", "mode": "list", "run": "main.py" },
-    { "name": "session", "title": "Last Claude session", "icon": "🧾", "mode": "detail", "run": "main.py" }
+    { "name": "session", "title": "Claude session", "icon": "🧾", "mode": "detail", "hidden": true, "run": "main.py" }
   ]
 }

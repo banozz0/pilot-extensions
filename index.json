@@ -5,7 +5,7 @@
       "id": "claude-sessions",
       "title": "Claude Sessions",
       "icon": "🤖",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Your recent Claude Code sessions by folder and title; copy the command that resumes one, or open its folder.",
       "requires": [
         "python3"
@@ -15,11 +15,6 @@
           "name": "sessions",
           "title": "Claude sessions",
           "mode": "list"
-        },
-        {
-          "name": "session",
-          "title": "Last Claude session",
-          "mode": "detail"
         }
       ],
       "permissions": {
@@ -33,8 +28,8 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "314e8bd71b81b92c06f7d9a9293f65c6bb19bd1c1ee806db94851bf2cc7a5e5d",
-          "size": 574,
+          "sha256": "77468d545ee568cb22f52c184c50cf95c51ac6814e898eddce5396126939fb70",
+          "size": 585,
           "executable": false
         },
         {
