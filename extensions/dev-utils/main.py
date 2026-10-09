@@ -38,7 +38,7 @@ def clipboard():
 
 
 def preview(text):
-    line = " ".join(text.split())
+    line = " ".join(text[:PREVIEW * 4].split())
     return line if len(line) <= PREVIEW else line[:PREVIEW - 1] + "…"
 
 
@@ -122,7 +122,7 @@ def transforms(text):
         header, payload = parts
         rows.append({"id": "JWT", "title": "Decode JWT", "keywords": "jwt token bearer decode",
                      "subtitle": "%s · %s · not verified" % (header.get("alg", "no alg"), preview(json.dumps(payload))),
-                     "actions": [{"type": "push", "command": "jwt", "title": "Show JWT"},
+                     "actions": [{"type": "push", "command": "jwt", "title": "Show JWT", "context": {"token": text.strip()}},
                                  {"type": "copy", "text": json.dumps(payload, indent=2, ensure_ascii=False),
                                   "title": "Copy payload"}]})
     try:
@@ -168,8 +168,14 @@ def ago(seconds):
     return "in " + words if seconds > 0 else words + " ago"
 
 
-def jwt_detail():
-    parts = jwt_parts(clipboard())
+def is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def jwt_detail(context):
+    """The token the Decode JWT row pushed, else the clipboard's."""
+    token = context.get("token") if isinstance(context.get("token"), str) else clipboard()
+    parts = jwt_parts(token)
     if not parts:
         send({"type": "error", "text": "found no JWT on the clipboard"})
         return
@@ -181,10 +187,10 @@ def jwt_detail():
             value = payload[key]
             metadata.append({"label": label, "text": ", ".join(map(str, value)) if isinstance(value, list) else str(value)})
     for key, label in (("iat", "Issued"), ("nbf", "Not before"), ("exp", "Expires")):
-        if isinstance(payload.get(key), (int, float)) and not isinstance(payload.get(key), bool):
+        if is_number(payload.get(key)):
             moment = datetime.fromtimestamp(payload[key], timezone.utc)
             metadata.append({"label": label, "text": "%s (%s)" % (iso(moment), ago(payload[key] - now))})
-    if isinstance(payload.get("exp"), (int, float)) and not isinstance(payload.get("exp"), bool):
+    if is_number(payload.get("exp")):
         metadata.append({"label": "State", "text": "expired" if payload["exp"] < now else "not expired"})
     head = json.dumps(header, indent=2, ensure_ascii=False)
     body = json.dumps(payload, indent=2, ensure_ascii=False)
@@ -205,7 +211,7 @@ def main():
     if command == "transform":
         send({"type": "list", "items": transforms(clipboard())})
     elif command == "jwt":
-        jwt_detail()
+        jwt_detail(run.get("context") if isinstance(run.get("context"), dict) else {})
     elif command == "new-uuid":
         value = str(uuid.uuid4())
         send({"type": "action", "action": {"type": "copy", "text": value}})

@@ -100,7 +100,7 @@ class PomodoroTests(ExtensionTestCase):
 
     def test_ended_focus_counts_the_block_and_shows_the_alert(self):
         self.write_state(count=2, block=self.block("focus"))
-        r = self.run_ext("ended", context={"block": "b1", "phase": "focus"})
+        r = self.run_ext("ended", context={"block": "b1"})
         self.assertEqual(len(r.actions), 1)
         alert = r.actions[0]
         self.assertActionShape(alert)
@@ -114,7 +114,7 @@ class PomodoroTests(ExtensionTestCase):
 
     def test_the_long_break_comes_every_n_blocks_and_start_break_takes_it(self):
         self.write_state(count=3, block=self.block("focus"))
-        alert = self.run_ext("ended", context={"block": "b1", "phase": "focus"}).actions[0]
+        alert = self.run_ext("ended", context={"block": "b1"}).actions[0]
         self.assertEqual(alert["note"], "4th block today. Take 15.")
         start_break = alert["actions"][0]
         t = self.timer(self.run_ext(start_break["command"], context=start_break["context"]))
@@ -129,7 +129,7 @@ class PomodoroTests(ExtensionTestCase):
 
     def test_the_day_count_starts_again_on_a_new_day(self):
         self.write_state(day="2001-01-01", count=7, block=self.block("focus"))
-        alert = self.run_ext("ended", context={"block": "b1", "phase": "focus"}).actions[0]
+        alert = self.run_ext("ended", context={"block": "b1"}).actions[0]
         self.assertEqual(alert["note"], "1st block today. Take 5.")
         self.assertEqual(self.state()["day"], time.strftime("%Y-%m-%d"))
 
@@ -153,7 +153,7 @@ class PomodoroTests(ExtensionTestCase):
 
     def test_a_stale_end_changes_nothing(self):
         self.write_state(count=2, block=self.block("focus"))
-        r = self.run_ext("ended", context={"block": "older", "phase": "focus"})
+        r = self.run_ext("ended", context={"block": "older"})
         self.assertEqual(r.actions, [{"type": "hud", "text": "Timer done"}])
         self.assertEqual(self.state()["count"], 2)
 

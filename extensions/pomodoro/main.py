@@ -91,7 +91,7 @@ class State:
         b = self.block
         if not b:
             return None
-        if b.get("left") is not None or b.get("ends", 0) > now:
+        if paused(b) or b.get("ends", 0) > now:
             return b
         return None
 
@@ -113,23 +113,32 @@ def clock(seconds):
     return "%d:%02d" % (seconds // 60, seconds % 60)
 
 
+def paused(block):
+    """A paused block keeps the seconds it had left; a running one its end time."""
+    return block.get("left") is not None
+
+
 def left(block, now):
-    return block["left"] if block.get("left") is not None else block["ends"] - now
+    return block["left"] if paused(block) else block["ends"] - now
+
+
+def buttons(block):
+    """The timer's and Today's buttons: Resume and Stop while paused, else Pause, Skip and Stop."""
+    if paused(block):
+        return [run_action("resume", "Resume"), run_action("stop", "Stop")]
+    return [run_action("pause", "Pause"), run_action("skip", "Skip"), run_action("stop", "Stop")]
 
 
 def timer(block, state, s, now):
-    paused = block.get("left") is not None
     seconds = min(max(int(math.ceil(left(block, now))), 1), 86400)
-    buttons = [run_action("resume", "Resume"), run_action("stop", "Stop")] if paused else \
-        [run_action("pause", "Pause"), run_action("skip", "Skip"), run_action("stop", "Stop")]
-    return {"type": "timer", "title": title(block, state, s), "seconds": seconds, "paused": paused,
-            "end": run_action("ended", "End", {"block": block["id"], "phase": block["phase"]}), "actions": buttons}
+    return {"type": "timer", "title": title(block, state, s), "seconds": seconds, "paused": paused(block),
+            "end": run_action("ended", "End", {"block": block["id"]}), "actions": buttons(block)}
 
 
-def start(state, s, phase, minutes, long=False, now=None, say=True):
-    now = time.time() if now is None else now
-    block = {"id": "%d-%s" % (int(now * 1000), phase), "phase": phase, "long": long, "length": minutes * 60,
-             "ends": now + minutes * 60, "left": None}
+def start(state, s, phase, minutes, long=False, say=True):
+    now = time.time()
+    block = {"id": "%d-%s" % (int(now * 1000), phase), "phase": phase, "long": long, "ends": now + minutes * 60,
+             "left": None}
     state.block = block
     state.save()
     act(timer(block, state, s, now))
@@ -138,13 +147,13 @@ def start(state, s, phase, minutes, long=False, now=None, say=True):
         hud("%s %d min. Ends %s." % (what, minutes, time.strftime("%H:%M", time.localtime(block["ends"]))))
 
 
-def start_next(state, s, phase, now=None, say=True):
+def start_next(state, s, phase, say=True):
     """The next block of the round, as the end alert, Skip and the auto start begin it: the long break when due."""
     if phase == "focus":
-        start(state, s, "focus", s.focus, now=now, say=say)
+        start(state, s, "focus", s.focus, say=say)
     else:
         minutes, long = rest_length(state, s)
-        start(state, s, "rest", minutes, long, now=now, say=say)
+        start(state, s, "rest", minutes, long, say=say)
 
 
 def ordinal(n):
@@ -196,13 +205,13 @@ def today_detail(state, s, now):
     count = state.today
     if block is None:
         running, actions = "Nothing", [run_action("focus", "Start focus"), run_action("break", "Start break")]
-    elif block.get("left") is not None:
-        running = "%s, paused at %s" % (title(block, state, s), clock(block["left"]))
-        actions = [run_action("resume", "Resume"), run_action("stop", "Stop")]
     else:
-        running = "%s, %s left, ends %s" % (title(block, state, s), clock(block["ends"] - now),
-                                            time.strftime("%H:%M", time.localtime(block["ends"])))
-        actions = [run_action("pause", "Pause"), run_action("skip", "Skip"), run_action("stop", "Stop")]
+        actions = buttons(block)
+        if paused(block):
+            running = "%s, paused at %s" % (title(block, state, s), clock(block["left"]))
+        else:
+            running = "%s, %s left, ends %s" % (title(block, state, s), clock(block["ends"] - now),
+                                                time.strftime("%H:%M", time.localtime(block["ends"])))
     if count > 0 and count % s.every == 0:
         long_line = "The next break is the long one."
     else:
@@ -248,7 +257,7 @@ def main():
     elif command == "pause":
         if block is None:
             hud("No timer running.")
-        elif block.get("left") is not None:
+        elif paused(block):
             hud("Already paused at %s." % clock(block["left"]))
         else:
             block["left"] = max(1, int(math.ceil(block["ends"] - now)))
@@ -256,7 +265,7 @@ def main():
             act(timer(block, state, s, now))
             hud("Paused at %s." % clock(block["left"]))
     elif command == "resume":
-        if block is None or block.get("left") is None:
+        if block is None or not paused(block):
             hud("Nothing paused.")
         else:
             block["ends"] = now + block["left"]

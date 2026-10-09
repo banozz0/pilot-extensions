@@ -12,8 +12,8 @@ import shlex
 import shutil
 import subprocess
 import sys
-import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
 MAX_DEPTH = 3
 SKIP = {"node_modules", "build", "dist", "target", "DerivedData", "Pods", "venv", "__pycache__"}
@@ -108,39 +108,37 @@ def web_url(remote):
 
 
 def activity(own):
-    times = [os.stat(os.path.join(own, n)).st_mtime for n in ("index", "HEAD") if os.path.exists(os.path.join(own, n))]
-    return max(times) if times else 0
+    times = []
+    for name in ("index", "HEAD"):
+        try:
+            times.append(os.stat(os.path.join(own, name)).st_mtime)
+        except OSError:
+            pass
+    return max(times, default=0)
+
+
+def status(repo, deadline):
+    """True when `repo` has uncommitted changes, False when clean, None when git did not answer by `deadline`."""
+    left = deadline - time.monotonic()
+    if left <= 0.05:
+        return None
+    try:
+        done = subprocess.run(["git", "--no-optional-locks", "-C", repo, "status", "--porcelain",
+                               "--ignore-submodules=dirty"], capture_output=True, timeout=left)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return bool(done.stdout.strip()) if done.returncode == 0 else None
 
 
 def changes(repos, deadline):
     """{repo: True when it has uncommitted changes, False when clean}; repos not answered by `deadline` left out."""
-    results, lock, queue = {}, threading.Lock(), list(repos)
-
-    def worker():
-        while True:
-            with lock:
-                if not queue:
-                    return
-                repo = queue.pop()
-            left = deadline - time.monotonic()
-            if left <= 0.05:
-                return
-            try:
-                done = subprocess.run(["git", "--no-optional-locks", "-C", repo, "status", "--porcelain",
-                                       "--ignore-submodules=dirty"], capture_output=True, timeout=left)
-            except (subprocess.TimeoutExpired, OSError):
-                continue
-            if done.returncode == 0:
-                with lock:
-                    results[repo] = bool(done.stdout.strip())
-
-    threads = [threading.Thread(target=worker, daemon=True) for _ in range(min(WORKERS, len(repos)))]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(max(0, deadline - time.monotonic()) + 0.2)
-    with lock:
-        return dict(results)
+    if not repos:
+        return {}
+    pool = ThreadPoolExecutor(WORKERS)
+    futures = {pool.submit(status, repo, deadline): repo for repo in repos}
+    wait(futures, timeout=max(0, deadline - time.monotonic()) + 0.2)
+    pool.shutdown(wait=False, cancel_futures=True)
+    return {futures[f]: f.result() for f in futures if f.done() and not f.cancelled() and f.result() is not None}
 
 
 def load_cache(path):
@@ -190,11 +188,9 @@ def list_repos(run, started):
         send({"type": "error", "text": "has no folder %s: set Repos folder on the Extensions page" % tilde(root)})
         return
     repos = find_repos(root)
-    cache_path = os.path.join((run.get("paths") or {}).get("cache") or os.environ.get("TMPDIR", "/tmp"), "repos.json")
+    cache_path = os.path.join(cache_dir(run), "repos.json")
     cache = load_cache(cache_path)
-    fresh = changes(repos, started + STATUS_BUDGET)
-    for repo, dirty in fresh.items():
-        cache[repo] = dirty
+    cache.update(changes(repos, started + STATUS_BUDGET))
     save_cache(cache_path, {r: cache[r] for r in repos if r in cache})
     terminal = app_name(terminal_app(preferences))
     has_lazygit = shutil.which("lazygit") is not None
@@ -227,58 +223,58 @@ def list_repos(run, started):
     send({"type": "list", "items": items})
 
 
+def cache_dir(run):
+    return (run.get("paths") or {}).get("cache") or os.environ.get("TMPDIR", "/tmp")
+
+
 def open_with(arguments):
     done = subprocess.run(["open"] + arguments, capture_output=True, text=True, timeout=10)
     return None if done.returncode == 0 else (done.stderr.strip() or "open failed")[:160]
 
 
-def repo_from(run):
-    path = ((run.get("context") or {}) if isinstance(run.get("context"), dict) else {}).get("path")
-    return path if isinstance(path, str) and os.path.isdir(path) else None
-
-
-def open_terminal(run):
-    repo = repo_from(run)
-    if not repo:
+def launch(run, command=None):
+    """Opens a terminal window in the repo the context names, running `command` (a path) when given: Ghostty as a new
+    window there; another terminal by opening the folder, or for a command a .command file Terminal runs. The window
+    belongs to the terminal, never to this program. Returns (repo, app name), or None after sending the error."""
+    context = run.get("context") if isinstance(run.get("context"), dict) else {}
+    repo = context.get("path")
+    if not (isinstance(repo, str) and os.path.isdir(repo)):
         send({"type": "error", "text": "got no repo folder that exists"})
-        return
+        return None
     app = terminal_app(run.get("preferences") or {})
     if is_ghostty(app):
-        failed = open_with(["-na", app, "--args", "--working-directory=" + repo, "--window-save-state=never"])
+        arguments = ["-na", app, "--args", "--working-directory=" + repo, "--window-save-state=never"]
+        failed = open_with(arguments + (["--command=" + command] if command else []))
+    elif command:
+        os.makedirs(cache_dir(run), exist_ok=True)
+        script = os.path.join(cache_dir(run), "%s.command" % os.path.basename(command))
+        with open(script, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\ncd %s && exec %s\n" % (shlex.quote(repo), shlex.quote(command)))
+        os.chmod(script, 0o755)
+        app = "Terminal"
+        failed = open_with(["-a", app, script])
     else:
         failed = open_with(["-a", app, repo])
     if failed:
         send({"type": "error", "text": failed})
-    else:
-        send({"type": "hud", "text": "%s in %s" % (os.path.basename(repo), app_name(app))})
+        return None
+    return repo, app_name(app)
+
+
+def open_terminal(run):
+    opened = launch(run)
+    if opened:
+        send({"type": "hud", "text": "%s in %s" % (os.path.basename(opened[0]), opened[1])})
 
 
 def lazygit(run):
-    repo = repo_from(run)
-    if not repo:
-        send({"type": "error", "text": "got no repo folder that exists"})
-        return
     binary = shutil.which("lazygit")
     if not binary:
         send({"type": "error", "text": "lazygit is not installed: brew install lazygit"})
         return
-    app = terminal_app(run.get("preferences") or {})
-    if is_ghostty(app):
-        failed = open_with(["-na", app, "--args", "--working-directory=" + repo, "--window-save-state=never",
-                            "--command=" + binary])
-    else:
-        cache = (run.get("paths") or {}).get("cache") or os.environ.get("TMPDIR", "/tmp")
-        os.makedirs(cache, exist_ok=True)
-        script = os.path.join(cache, "lazygit.command")
-        with open(script, "w", encoding="utf-8") as f:
-            f.write("#!/bin/sh\ncd %s && exec %s\n" % (shlex.quote(repo), shlex.quote(binary)))
-        os.chmod(script, 0o755)
-        app = "Terminal"
-        failed = open_with(["-a", app, script])
-    if failed:
-        send({"type": "error", "text": failed})
-    else:
-        send({"type": "hud", "text": "lazygit on %s" % os.path.basename(repo)})
+    opened = launch(run, binary)
+    if opened:
+        send({"type": "hud", "text": "lazygit on %s" % os.path.basename(opened[0])})
 
 
 def main():

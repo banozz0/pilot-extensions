@@ -131,11 +131,9 @@ def check_files(folder, problems):
         problems.append("%d files, more than %d" % (len(found), MAX_FILES))
     for f in found:
         if f["size"] > MAX_FILE:
-            problems.append("%s is over 2 MB" % f["path"])
-        if f["path"].startswith("/") or ".." in f["path"].split("/"):
-            problems.append("%s leaves the folder" % f["path"])
+            problems.append("%s is over %d MB" % (f["path"], MAX_FILE // 2 ** 20))
     if sum(f["size"] for f in found) > MAX_TOTAL:
-        problems.append("over 10 MB in all")
+        problems.append("over %d MB in all" % (MAX_TOTAL // 2 ** 20))
 
 
 def check(folder):

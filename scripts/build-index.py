@@ -75,9 +75,9 @@ def render(index):
 
 
 def main():
-    text = render(build())
-    INDEX.write_text(text, encoding="utf-8")
-    count = len(json.loads(text)["extensions"])
+    index = build()
+    INDEX.write_text(render(index), encoding="utf-8")
+    count = len(index["extensions"])
     print("index.json: %d extension%s" % (count, "" if count == 1 else "s"))
 
 

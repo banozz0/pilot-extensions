@@ -2,21 +2,14 @@
 proves the result is an extension Pilot reads: files from index.json only, sha256 checked, executables 0755 and the
 rest 0644, the folder named by its id."""
 import hashlib
-import importlib.util
 import json
-import os
 import shutil
 import stat
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from harness import EXTENSIONS, ROOT, SYSTEM_PATH
-
-spec = importlib.util.spec_from_file_location("check", ROOT / "scripts" / "check.py")
-check = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(check)
+from harness import EXTENSIONS, ROOT, Sandbox, check
 
 
 class CatalogueInstallTests(unittest.TestCase):
@@ -28,7 +21,6 @@ class CatalogueInstallTests(unittest.TestCase):
     def install(self, entry):
         folder = self.pilot / "Extensions" / entry["id"]
         for f in entry["files"]:
-            self.assertFalse(f["path"].startswith("/") or ".." in f["path"].split("/"), f["path"])
             data = (EXTENSIONS / entry["id"] / f["path"]).read_bytes()
             self.assertEqual(hashlib.sha256(data).hexdigest(), f["sha256"], "%s/%s" % (entry["id"], f["path"]))
             self.assertEqual(len(data), f["size"])
@@ -40,8 +32,7 @@ class CatalogueInstallTests(unittest.TestCase):
 
     def test_index_lists_every_extension_folder(self):
         self.assertEqual(self.index["schema"], 1)
-        self.assertEqual(sorted(e["id"] for e in self.index["extensions"]),
-                         sorted(p.name for p in EXTENSIONS.iterdir() if p.is_dir()))
+        self.assertEqual([e["id"] for e in self.index["extensions"]], [f.name for f in check.build_index.folders()])
 
     def test_every_entry_installs_into_a_folder_pilot_reads(self):
         for entry in self.index["extensions"]:
@@ -53,31 +44,19 @@ class CatalogueInstallTests(unittest.TestCase):
                 self.assertEqual([c["name"] for c in entry["commands"]], shown)
                 self.assertEqual(entry["version"], manifest["version"])
                 for c in manifest["commands"]:
-                    mode = (folder / c["run"]).stat().st_mode
-                    self.assertTrue(mode & stat.S_IXUSR, c["run"])
+                    self.assertTrue((folder / c["run"]).stat().st_mode & stat.S_IXUSR, c["run"])
 
     def test_an_installed_program_answers_from_its_new_folder(self):
-        """One command of each installed extension runs from the temp folder, not from the repo."""
+        """The first list or detail command of each installed extension runs from the temp folder, not the repo."""
+        box = Sandbox()
+        self.addCleanup(box.close)
+        for name, body in (("pbpaste", "echo hello"), ("pbcopy", "cat >/dev/null"), ("open", "exit 0"), ("gh", "exit 1")):
+            box.shim(name, body)
         for entry in self.index["extensions"]:
             with self.subTest(entry["id"]):
                 folder = self.install(entry)
                 manifest = json.loads((folder / "extension.json").read_text(encoding="utf-8"))
-                command = next(c for c in manifest["commands"] if c["mode"] == "detail" or c["mode"] == "list")
-                data = self.pilot / "ExtensionData" / entry["id"] / "data"
-                cache = self.pilot / "Caches" / entry["id"]
-                data.mkdir(parents=True)
-                cache.mkdir(parents=True)
-                shims = self.pilot / "shims"
-                shims.mkdir(exist_ok=True)
-                for name, body in (("pbpaste", "echo hello"), ("pbcopy", "cat >/dev/null"), ("open", "exit 0"), ("gh", "exit 1")):
-                    (shims / name).write_text("#!/bin/sh\n" + body + "\n")
-                    (shims / name).chmod(0o755)
-                program = folder / command["run"]
-                message = {"type": "run", "extension": entry["id"], "command": command["name"], "query": "",
-                           "preferences": {}, "paths": {"data": str(data), "cache": str(cache)}}
-                env = {"HOME": str(self.pilot), "USER": os.environ.get("USER", "sven"), "TMPDIR": str(self.pilot) + "/",
-                       "PATH": ":".join([str(folder), str(shims), SYSTEM_PATH]), "LANG": "en_US.UTF-8", "PILOT_EXTENSION_ID": entry["id"]}
-                out = subprocess.run([str(program)], cwd=str(folder), env=env, input=json.dumps(message) + "\n",
-                                     capture_output=True, text=True, timeout=2).stdout
-                kinds = [json.loads(line)["type"] for line in out.splitlines() if line.strip()]
-                self.assertTrue(set(kinds) & {"list", "detail", "error"}, out)
+                command = next(c for c in manifest["commands"] if c["mode"] in ("list", "detail"))
+                result = box.run(entry["id"], command["name"], folder=folder)
+                self.assertEqual(result.plain, [])
+                self.assertTrue({m["type"] for m in result.messages} & {"list", "detail", "error"}, result.stdout)

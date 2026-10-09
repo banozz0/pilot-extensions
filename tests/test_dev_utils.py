@@ -74,14 +74,20 @@ class DevUtilsTests(ExtensionTestCase):
         self.assertNotIn("Base64 decode", rows)
         jwt_row = rows["Decode JWT"]
         self.assertTrue(jwt_row["subtitle"].startswith("HS256 · "))
-        self.assertEqual(jwt_row["actions"][0], {"type": "push", "command": "jwt", "title": "Show JWT"})
-        d = self.run_ext("jwt").detail
+        push = jwt_row["actions"][0]
+        self.assertEqual(push, {"type": "push", "command": "jwt", "title": "Show JWT", "context": {"token": token}})
+        self.clip("the clipboard changed since")
+        d = self.run_ext("jwt", context=push["context"]).detail
         facts = {f["label"]: f["text"] for f in d["metadata"]}
         self.assertEqual((facts["Algorithm"], facts["Subject"], facts["State"]), ("HS256", "sven", "expired"))
         self.assertTrue(facts["Issued"].startswith("2026-10-09T22:00:00Z ("))
         self.assertIn("1 hour ago", facts["Expires"])
         self.assertIn('"sub": "sven"', d["markdown"])
         self.assertIn("not verified", d["markdown"])
+
+    def test_jwt_detail_on_its_own_reads_the_clipboard(self):
+        self.clip(jwt({"alg": "none"}, {"sub": "x"}))
+        self.assertEqual(self.run_ext("jwt").detail["metadata"][0], {"label": "Algorithm", "text": "none"})
 
     def test_jwt_detail_without_a_token_is_an_error(self):
         self.clip("not a token")

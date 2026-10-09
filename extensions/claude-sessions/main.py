@@ -123,7 +123,7 @@ def metas(cache_dir):
                 cache = json.load(f)
         except (OSError, ValueError):
             cache = {}
-    out, kept = [], {}
+    out, kept, changed = [], {}, False
     for mtime, size, path in transcripts():
         hit = cache.get(path)
         if isinstance(hit, dict) and hit.get("mtime") == mtime and hit.get("size") == size:
@@ -133,9 +133,10 @@ def metas(cache_dir):
                 meta = read_meta(path, size)
             except OSError:
                 continue
+            changed = True
         kept[path] = {"mtime": mtime, "size": size, "meta": meta}
         out.append((mtime, size, path, meta))
-    if cache_path:
+    if cache_path and (changed or len(kept) != len(cache)):
         try:
             os.makedirs(cache_dir, exist_ok=True)
             with open(cache_path + ".tmp", "w", encoding="utf-8") as f:
@@ -175,9 +176,14 @@ def title(meta):
     return meta.get("title") or meta.get("prompt") or "Session %s" % meta["id"][:8]
 
 
-def session_actions(meta):
-    actions = [{"type": "copy", "text": resume(meta), "title": "Copy resume command"},
-               {"type": "paste", "text": resume(meta), "title": "Paste resume command"}]
+def session_actions(meta, details=None):
+    """Copy and paste the resume command, then Show details (the transcript `details` names, in the list), the folder
+    and the id."""
+    command = resume(meta)
+    actions = [{"type": "copy", "text": command, "title": "Copy resume command"},
+               {"type": "paste", "text": command, "title": "Paste resume command"}]
+    if details:
+        actions.append({"type": "push", "command": "session", "title": "Show details", "context": {"file": details}})
     if meta.get("cwd") and os.path.isdir(meta["cwd"]):
         actions.append({"type": "open", "url": meta["cwd"], "title": "Open folder"})
     actions.append({"type": "copy", "text": meta["id"], "title": "Copy session id"})
@@ -188,8 +194,7 @@ def list_sessions(run):
     now = time.time()
     items = []
     for mtime, size, path, meta in metas((run.get("paths") or {}).get("cache")):
-        actions = session_actions(meta)
-        actions.insert(2, {"type": "push", "command": "session", "title": "Show details", "context": {"file": path}})
+        actions = session_actions(meta, details=path)
         folder = tilde(meta.get("cwd")) or "unknown folder"
         items.append({"id": meta["id"], "title": title(meta), "subtitle": "%s · %s" % (folder, ago(mtime, now)),
                       "icon": "🤖", "keywords": "%s %s %s" % (os.path.basename(meta.get("cwd") or ""),
@@ -223,21 +228,19 @@ def when(stamp):
 def show_session(run):
     context = run.get("context") if isinstance(run.get("context"), dict) else {}
     wanted = context.get("file")
-    root = os.path.realpath(projects())
-    found = metas((run.get("paths") or {}).get("cache"))
     if isinstance(wanted, str):
         real = os.path.realpath(wanted)
-        if not (real.startswith(root + os.sep) and real.endswith(".jsonl") and os.path.isfile(real)):
+        if not (real.startswith(os.path.realpath(projects()) + os.sep) and real.endswith(".jsonl") and os.path.isfile(real)):
             send({"type": "error", "text": "that session is gone"})
             return
         st = os.stat(real)
-        chosen = next((f for f in found if os.path.realpath(f[2]) == real), None) or \
-            (st.st_mtime, st.st_size, real, read_meta(real, st.st_size))
-    elif found:
-        chosen = found[0]
+        chosen = (st.st_mtime, st.st_size, real, read_meta(real, st.st_size))
     else:
-        send({"type": "error", "text": "found no Claude Code sessions in %s" % tilde(projects())})
-        return
+        found = metas((run.get("paths") or {}).get("cache"))
+        if not found:
+            send({"type": "error", "text": "found no Claude Code sessions in %s" % tilde(projects())})
+            return
+        chosen = found[0]
     mtime, size, path, meta = chosen
     n = counts(path, size)
     markdown = "# %s\n\nResume it in a terminal:\n\n```sh\n%s\n```\n" % (title(meta), resume(meta))

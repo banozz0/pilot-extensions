@@ -9,6 +9,8 @@ Two test-only additions, both prepended to PATH after the program's folder: a `s
 names an interpreter (e.g. /usr/bin/python3, macOS's 3.9), a `python3` that runs it, so every program is proven on
 the oldest Python a Mac ships.
 """
+import functools
+import importlib.util
 import json
 import os
 import shutil
@@ -23,25 +25,34 @@ ROOT = Path(__file__).resolve().parent.parent
 EXTENSIONS = ROOT / "extensions"
 SYSTEM_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 TIMEOUTS = {"list": 2.0, "detail": 2.0, "no-view": 30.0}
+# Each action type and the field it needs; an item carries the first seven, a no-view run may also print the last two.
+ITEM_ACTIONS = {"open": "url", "copy": "text", "paste": "text", "push": "command", "run": "command", "hud": "text",
+                "pilot": "action"}
+ACTIONS = dict(ITEM_ACTIONS, timer="seconds", alert="text")
+
+_spec = importlib.util.spec_from_file_location("check", ROOT / "scripts" / "check.py")
+check = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(check)
 
 
-def manifest(ext_id):
-    return json.loads((EXTENSIONS / ext_id / "extension.json").read_text(encoding="utf-8"))
+@functools.lru_cache(maxsize=None)
+def _manifest(folder):
+    return json.loads((Path(folder) / "extension.json").read_text(encoding="utf-8"))
 
 
-def resolved_preferences(ext_id, saved):
+def manifest(ext_id, folder=None):
+    return _manifest(str(folder or EXTENSIONS / ext_id))
+
+
+def resolved_preferences(m, saved):
     """Pilot's Preference.resolved: the saved value when it fits, else the default; a checkbox with neither is false,
     any other type left out."""
     values = {}
-    for p in manifest(ext_id).get("preferences", []):
+    for p in m.get("preferences", []):
         value = saved.get(p["name"])
         kind = p["type"]
-        if value is not None:
-            ok = isinstance(value, bool) if kind == "checkbox" else isinstance(value, str)
-            if kind == "dropdown":
-                ok = ok and value in [o["value"] for o in p["data"]]
-            if not ok:
-                value = None
+        if value is not None and not check.fits(kind, p.get("data") or [], value):
+            value = None
         if value is None:
             value = p.get("default")
         if value is None and kind == "checkbox":
@@ -54,10 +65,9 @@ def resolved_preferences(ext_id, saved):
 class Result:
     def __init__(self, stdout, stderr, code, elapsed):
         self.stdout, self.stderr, self.code, self.elapsed = stdout, stderr, code, elapsed
-        self.lines = [line for line in stdout.splitlines() if line.strip()]
         self.messages = []
         self.plain = []
-        for line in self.lines:
+        for line in (line for line in stdout.splitlines() if line.strip()):
             try:
                 message = json.loads(line)
             except ValueError:
@@ -119,12 +129,14 @@ class Sandbox:
     def shim_calls(self):
         return self.log.read_text().splitlines() if self.log.exists() else []
 
-    def run(self, ext_id, command, query=None, context=None, preferences=None, home=None, timeout=None):
-        m = manifest(ext_id)
+    def run(self, ext_id, command, query=None, context=None, preferences=None, home=None, timeout=None, folder=None):
+        """Runs `command`, from `folder` when given (an installed copy), else from the repo."""
+        folder = Path(folder or EXTENSIONS / ext_id)
+        m = manifest(ext_id, folder)
         spec = next(c for c in m["commands"] if c["name"] == command)
-        program = (EXTENSIONS / ext_id / spec["run"]).resolve()
+        program = (folder / spec["run"]).resolve()
         message = {"type": "run", "extension": ext_id, "command": command,
-                   "preferences": resolved_preferences(ext_id, preferences or {}),
+                   "preferences": resolved_preferences(m, preferences or {}),
                    "paths": {"data": str(self.data), "cache": str(self.cache)}}
         if query is not None or spec["mode"] in ("list", "detail"):
             message["query"] = query or ""
@@ -163,19 +175,15 @@ class ExtensionTestCase(unittest.TestCase):
 
     def assertItemShape(self, items):
         """Every item as Pilot decodes it: a title string, optional strings, actions of known types with their field."""
-        fields = {"open": "url", "copy": "text", "paste": "text", "push": "command", "run": "command", "hud": "text",
-                  "pilot": "action"}
         for item in items:
             self.assertIsInstance(item.get("title"), str)
             for key in ("id", "subtitle", "icon", "keywords"):
                 if key in item:
                     self.assertIsInstance(item[key], str, key)
             for action in item.get("actions", []):
-                self.assertActionShape(action, fields)
+                self.assertActionShape(action, ITEM_ACTIONS)
 
-    def assertActionShape(self, action, fields=None):
-        fields = fields or {"open": "url", "copy": "text", "paste": "text", "push": "command", "run": "command",
-                            "hud": "text", "pilot": "action", "timer": "seconds", "alert": "text"}
+    def assertActionShape(self, action, fields=ACTIONS):
         self.assertIn(action.get("type"), fields, action)
         self.assertIn(fields[action["type"]], action, action)
         if action["type"] in ("run", "push"):
