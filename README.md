@@ -20,6 +20,7 @@ Every extension here needs `python3`, which macOS has.
 | --- | --- | --- |
 | 🍅 Pomodoro | Focus, Break, Custom focus…, Pause timer, Resume timer, Skip block, Stop timer, Pomodoro today | Focus blocks and breaks counted down in Pilot's Timer item, the long break every few blocks, an alert or the next block when one ends. |
 | 🔌 Ports | Kill port | Every listening TCP port with the program holding it; Quit, Force quit, open or copy its localhost URL, copy the PID. Never Pilot, never pid 1. |
+| 🌿 Repos | Git repos | The git repos under a folder (default ~/code, three levels deep) with branch and uncommitted changes; open one in your terminal (Ghostty when installed), in lazygit, in Finder or on GitHub, or copy its path. |
 
 ## Making one
 

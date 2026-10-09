@@ -110,6 +110,46 @@
           "executable": true
         }
       ]
+    },
+    {
+      "id": "repos",
+      "title": "Repos",
+      "icon": "🌿",
+      "version": "1.0.0",
+      "description": "Your git repos with their branch and uncommitted changes; open one in your terminal, lazygit, Finder or GitHub.",
+      "requires": [
+        "python3",
+        "git"
+      ],
+      "commands": [
+        {
+          "name": "repos",
+          "title": "Git repos",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": false,
+        "files": [
+          "~/code"
+        ],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "7c4dac3346e96d1fdea742bd977b18d7b84a8fcc236fa4331269e1e396234da9",
+          "size": 1092,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "85ccbf9bdbd8a55b76fd2114068d79ffc7961a48bd2bfdde0eeede5e34d44420",
+          "size": 11177,
+          "executable": true
+        }
+      ]
     }
   ]
 }
