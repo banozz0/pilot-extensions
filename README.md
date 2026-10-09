@@ -22,6 +22,7 @@ Every extension here needs `python3`, which macOS has.
 | 🔌 Ports | Kill port | Every listening TCP port with the program holding it; Quit, Force quit, open or copy its localhost URL, copy the PID. Never Pilot, never pid 1. |
 | 🌿 Repos | Git repos | The git repos under a folder (default ~/code, three levels deep) with branch and uncommitted changes; open one in your terminal (Ghostty when installed), in lazygit, in Finder or on GitHub, or copy its path. |
 | 🤖 Claude Sessions | Claude sessions, Last Claude session | Your 60 newest Claude Code sessions by title, folder and age; copy or paste the command that resumes one in its folder, open the folder, or see its facts (branch, start, messages, model). Read only; a prompt shows only as a short title. |
+| 🧰 Dev Utils | Transform clipboard, Decode JWT from clipboard, Copy new UUID | The clipboard as base64, URL encoding, pretty or minified JSON, epoch to ISO date and back, SHA-256, MD5, lower and upper case, slug, a new UUID; only the rows that fit what you copied; Return copies the result, Cmd+K pastes it. A JWT opens a detail with its header, payload and expiry (not verified). |
 
 ## Making one
 

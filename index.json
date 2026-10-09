@@ -46,6 +46,53 @@
       ]
     },
     {
+      "id": "dev-utils",
+      "title": "Dev Utils",
+      "icon": "🧰",
+      "version": "1.0.0",
+      "description": "Turn the clipboard into what you need: base64, URL encoding, JSON, JWT, epoch and ISO dates, hashes, case, a new UUID.",
+      "requires": [
+        "python3"
+      ],
+      "commands": [
+        {
+          "name": "transform",
+          "title": "Transform clipboard",
+          "mode": "list"
+        },
+        {
+          "name": "jwt",
+          "title": "Decode JWT from clipboard",
+          "mode": "detail"
+        },
+        {
+          "name": "new-uuid",
+          "title": "Copy new UUID",
+          "mode": "no-view"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": true,
+        "files": [],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "939b9a0b8b1b9cda52704f8c2346bb243d3533d377f171ffcafd196768b5e2d4",
+          "size": 653,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "74628a6930b293080cba6bbfb0e53e7e8a284235a497fd141f767740ad0a6333",
+          "size": 8970,
+          "executable": true
+        }
+      ]
+    },
+    {
       "id": "pomodoro",
       "title": "Pomodoro",
       "icon": "🍅",

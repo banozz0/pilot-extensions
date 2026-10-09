@@ -1,0 +1,15 @@
+{
+  "id": "dev-utils",
+  "title": "Dev Utils",
+  "icon": "🧰",
+  "version": "1.0.0",
+  "description": "Turn the clipboard into what you need: base64, URL encoding, JSON, JWT, epoch and ISO dates, hashes, case, a new UUID.",
+  "runtime": "process",
+  "requires": ["python3"],
+  "permissions": { "clipboard": true },
+  "commands": [
+    { "name": "transform", "title": "Transform clipboard", "mode": "list", "run": "main.py" },
+    { "name": "jwt", "title": "Decode JWT from clipboard", "icon": "🔐", "mode": "detail", "run": "main.py" },
+    { "name": "new-uuid", "title": "Copy new UUID", "icon": "🆔", "mode": "no-view", "run": "main.py" }
+  ]
+}
