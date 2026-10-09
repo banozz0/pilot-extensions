@@ -2,6 +2,50 @@
   "schema": 1,
   "extensions": [
     {
+      "id": "claude-sessions",
+      "title": "Claude Sessions",
+      "icon": "🤖",
+      "version": "1.0.0",
+      "description": "Your recent Claude Code sessions by folder and title; copy the command that resumes one, or open its folder.",
+      "requires": [
+        "python3"
+      ],
+      "commands": [
+        {
+          "name": "sessions",
+          "title": "Claude sessions",
+          "mode": "list"
+        },
+        {
+          "name": "session",
+          "title": "Last Claude session",
+          "mode": "detail"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": true,
+        "files": [
+          "~/.claude/projects"
+        ],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "314e8bd71b81b92c06f7d9a9293f65c6bb19bd1c1ee806db94851bf2cc7a5e5d",
+          "size": 574,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "7e5f92b3c7993aee036c83040940c618a5f3a1c1d9d8aeac156a4ce061d4260f",
+          "size": 10338,
+          "executable": true
+        }
+      ]
+    },
+    {
       "id": "pomodoro",
       "title": "Pomodoro",
       "icon": "🍅",
