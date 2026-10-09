@@ -19,6 +19,7 @@ Every extension here needs `python3`, which macOS has.
 | Extension | Commands | What it does |
 | --- | --- | --- |
 | 🍅 Pomodoro | Focus, Break, Custom focus…, Pause timer, Resume timer, Skip block, Stop timer, Pomodoro today | Focus blocks and breaks counted down in Pilot's Timer item, the long break every few blocks, an alert or the next block when one ends. |
+| 🔌 Ports | Kill port | Every listening TCP port with the program holding it; Quit, Force quit, open or copy its localhost URL, copy the PID. Never Pilot, never pid 1. |
 
 ## Making one
 

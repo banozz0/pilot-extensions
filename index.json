@@ -72,6 +72,44 @@
           "executable": true
         }
       ]
+    },
+    {
+      "id": "ports",
+      "title": "Ports",
+      "icon": "🔌",
+      "version": "1.0.0",
+      "description": "See which program holds a listening TCP port and quit it: the dev server you forgot.",
+      "requires": [
+        "python3",
+        "lsof"
+      ],
+      "commands": [
+        {
+          "name": "kill-port",
+          "title": "Kill port",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": false,
+        "files": [],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "593ae160a7eabc3963896f542ebda4796d40f1bc9d61cac9fff7a4e8f069e854",
+          "size": 481,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "d028706948a4729c8f3971493aae25496983172f9f06444c0925a5248df388b6",
+          "size": 5578,
+          "executable": true
+        }
+      ]
     }
   ]
 }
