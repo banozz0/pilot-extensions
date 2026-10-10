@@ -5,11 +5,11 @@
       "id": "ai-usage",
       "title": "AI usage",
       "icon": "📊",
-      "version": "1.1.0",
-      "description": "See how much of your Codex limits you have used and how many Claude Code tokens you have burned, and when each resets.",
+      "version": "2.0.0",
+      "description": "See how much of your Claude and Codex limits you have used this session and this week, and when each resets, in the menu bar.",
       "examples": [
-        "Type AI usage: Codex 5-hour and weekly limits as bars with their reset times, then Claude tokens this block and this week",
-        "Bind AI usage summary to a key: one HUD line like Codex 5 h 52% · week 18% · Claude block 1.2M tokens"
+        "Glance at the menu bar: C and X gauges, the session over the week, amber from 60% and red from 85%",
+        "Click the gauges: a card per provider with Claude's session and week, Codex's 5 hours, week and credits, and when each was read"
       ],
       "requires": [
         "python3"
@@ -30,6 +30,7 @@
         "network": [],
         "clipboard": true,
         "files": [
+          "~/.local/state/ghostex/agent-hooks/claude-statusline",
           "~/.codex/sessions",
           "~/.codex/archived_sessions",
           "~/.claude/projects"
@@ -39,14 +40,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "70cc9f8b204d2051e7dcf057382e454d67ef10e6ae76dde2637c1018b44a2977",
-          "size": 1179,
+          "sha256": "06a41d280d91fe38c9e7c8611640de2d4904c3bf226310ad936d2c7b0e9f5077",
+          "size": 1243,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "6e55656a221207b8a0f4a49910c0db9c2de16d7a6feb38300f4ac4ad390b4535",
-          "size": 26854,
+          "sha256": "3dcedf73c7b16dfd48f26068e0185d77c396da39b43430938704a4817dea5286",
+          "size": 27980,
           "executable": true
         }
       ]

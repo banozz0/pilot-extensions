@@ -2,17 +2,17 @@
   "id": "ai-usage",
   "title": "AI usage",
   "icon": "📊",
-  "version": "1.1.0",
-  "description": "See how much of your Codex limits you have used and how many Claude Code tokens you have burned, and when each resets.",
-  "examples": ["Type AI usage: Codex 5-hour and weekly limits as bars with their reset times, then Claude tokens this block and this week", "Bind AI usage summary to a key: one HUD line like Codex 5 h 52% · week 18% · Claude block 1.2M tokens"],
+  "version": "2.0.0",
+  "description": "See how much of your Claude and Codex limits you have used this session and this week, and when each resets, in the menu bar.",
+  "examples": ["Glance at the menu bar: C and X gauges, the session over the week, amber from 60% and red from 85%", "Click the gauges: a card per provider with Claude's session and week, Codex's 5 hours, week and credits, and when each was read"],
   "runtime": "process",
   "requires": ["python3"],
-  "permissions": { "clipboard": true, "files": ["~/.codex/sessions", "~/.codex/archived_sessions", "~/.claude/projects"] },
-  "surfaces": { "page": { "command": "page", "every": 60 }, "bar": { "command": "bar", "every": 120 } },
+  "permissions": { "clipboard": true, "files": ["~/.local/state/ghostex/agent-hooks/claude-statusline", "~/.codex/sessions", "~/.codex/archived_sessions", "~/.claude/projects"] },
+  "surfaces": { "page": { "command": "page", "every": 60 }, "bar": { "command": "bar", "every": 60 } },
   "commands": [
     { "name": "usage", "title": "AI usage", "mode": "detail", "run": "main.py" },
     { "name": "summary", "title": "AI usage summary", "icon": "📈", "mode": "no-view", "run": "main.py" },
     { "name": "page", "title": "AI usage page", "mode": "no-view", "hidden": true, "run": "main.py" },
-    { "name": "bar", "title": "AI usage in the top bar", "mode": "no-view", "hidden": true, "run": "main.py" }
+    { "name": "bar", "title": "AI usage in the menu bar", "mode": "no-view", "hidden": true, "run": "main.py" }
   ]
 }

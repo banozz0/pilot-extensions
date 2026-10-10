@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 EXTENSIONS = ROOT / "extensions"
 SYSTEM_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-TIMEOUTS = {"list": 2.0, "detail": 2.0, "no-view": 30.0, "page": 5.0, "bar": 2.0}  # a page's and a bar item's: story 161
+TIMEOUTS = {"list": 2.0, "detail": 2.0, "no-view": 30.0, "page": 5.0, "bar": 2.0, "popover": 5.0}  # stories 161, 165
 # Each action type and the field it needs; an item carries the first seven, a no-view run may also print the last two.
 ITEM_ACTIONS = {"open": "url", "copy": "text", "paste": "text", "push": "command", "run": "command", "hud": "text",
                 "pilot": "action"}
@@ -132,7 +132,8 @@ class Sandbox:
     def run(self, ext_id, command, query=None, context=None, preferences=None, home=None, timeout=None, folder=None,
             surface=None):
         """Runs `command`, from `folder` when given (an installed copy), else from the repo; `surface` ("page" or "bar")
-        runs it as that surface does, the surface named in the run message and its time limit applied."""
+        runs it as that surface does (or "popover", a bar item's click), the surface named in the run message and its time
+        limit applied."""
         folder = Path(folder or EXTENSIONS / ext_id)
         m = manifest(ext_id, folder)
         spec = next(c for c in m["commands"] if c["name"] == command)
@@ -196,25 +197,32 @@ class ExtensionTestCase(unittest.TestCase):
             wanted = "no-view" if action["type"] == "run" else ("list", "detail")
             self.assertIn(names[action["command"]]["mode"], wanted, action)
 
-    BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons"}
+    BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons", "section"}
+    TONES = (None, "fine", "warn", "alert")
 
-    def assertBlocksShape(self, blocks):
-        """Every block as Pilot decodes it (story 161): a v1 type with its fields; a list's items and the buttons' actions
-        as an item's."""
+    def assertBlocksShape(self, blocks, types=BLOCK_TYPES):
+        """Every block as Pilot decodes it (stories 161 and 165): a known type with its fields; a list's items and the
+        buttons' actions as an item's; a section's blocks one level deep, a meter's resetsAt seconds since 1970."""
         self.assertIsInstance(blocks, list)
         for block in blocks:
-            self.assertIn(block.get("type"), self.BLOCK_TYPES, block)
+            self.assertIn(block.get("type"), types, block)
             kind = block["type"]
             if kind == "stats":
                 self.assertTrue(block["items"])
                 for stat in block["items"]:
                     self.assertIsInstance(stat.get("label"), str)
                     self.assertIsInstance(stat.get("value"), str)
-                    self.assertIn(stat.get("tone"), (None, "fine", "warn", "alert"))
+                    self.assertIn(stat.get("tone"), self.TONES)
             elif kind == "meter":
                 self.assertIsInstance(block.get("label"), str)
                 self.assertIsInstance(block.get("percent"), (int, float))
-                self.assertIn(block.get("tone"), (None, "fine", "warn", "alert"))
+                self.assertIn(block.get("tone"), self.TONES)
+                if "resetsAt" in block:
+                    self.assertIsInstance(block["resetsAt"], (int, float))
+            elif kind == "section":
+                self.assertIsInstance(block.get("title", ""), str)
+                self.assertIsInstance(block.get("subtitle", ""), str)
+                self.assertBlocksShape(block["blocks"], self.BLOCK_TYPES - {"section"})
             elif kind == "list":
                 self.assertItemShape(block["items"])
             elif kind == "markdown":
@@ -224,21 +232,37 @@ class ExtensionTestCase(unittest.TestCase):
                 for action in block["actions"]:
                     self.assertActionShape(action, ITEM_ACTIONS)
 
-    def page(self, **kwargs):
-        """The page command's one blocks message, its shape checked."""
-        result = self.run_ext("page", surface="page", **kwargs)
+    def assertGaugesShape(self, gauges):
+        """A bar line's gauges (story 165): up to 3, a label of at most 2 characters, 1 or 2 meters 0 to 100, a tone."""
+        self.assertLessEqual(len(gauges), 3)
+        for gauge in gauges:
+            self.assertLessEqual(len(gauge["label"]), 2)
+            self.assertTrue(1 <= len(gauge["meters"]) <= 2, gauge)
+            self.assertTrue(all(0 <= m <= 100 for m in gauge["meters"]), gauge)
+            self.assertIn(gauge.get("tone"), self.TONES)
+
+    def blocks(self, command, surface, **kwargs):
+        """One blocks message, its shape checked: a page's, or a bar command's popover (story 165)."""
+        result = self.run_ext(command, surface=surface, **kwargs)
         found = result.of_type("blocks")
         self.assertEqual(len(found), 1, result.stdout)
         self.assertBlocksShape(found[0]["blocks"])
         return found[0]["blocks"]
 
+    def page(self, **kwargs):
+        return self.blocks("page", "page", **kwargs)
+
+    def popover(self, **kwargs):
+        return self.blocks("bar", "popover", **kwargs)
+
     def bar(self, **kwargs):
-        """The bar command's one bar message: a short text, a tone, blocks for its dropdown."""
+        """The bar command's one bar message: a short text, a tone, gauges, blocks its popover shows until it answers."""
         result = self.run_ext("bar", surface="bar", **kwargs)
         found = result.of_type("bar")
         self.assertEqual(len(found), 1, result.stdout)
         self.assertIsInstance(found[0].get("text"), str)
         self.assertLessEqual(len(found[0]["text"]), 24)
-        self.assertIn(found[0].get("tone"), (None, "fine", "warn", "alert"))
+        self.assertIn(found[0].get("tone"), self.TONES)
+        self.assertGaugesShape(found[0].get("gauges", []))
         self.assertBlocksShape(found[0].get("blocks", []))
         return found[0]

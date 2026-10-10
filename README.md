@@ -28,7 +28,7 @@ Every extension here needs `python3`, which macOS has.
 | 📂 Easy-CD folders | Easy-CD folders | Open the folders you pinned or visited lately with easy-cd (ecd) in a terminal, without typing a path. |
 | 🐙 GitHub | My pull requests, GitHub issues, Failing CI runs | See what on GitHub needs you: pull requests waiting on your review, your own with their checks, issues given to you and CI runs that failed. |
 | 👻 Ghostex sessions | Ghostex sessions | Jump to any of your Ghostex agent sessions, and put idle ones to sleep or wake them, without hunting through the sidebar. |
-| 📊 AI usage | AI usage, AI usage summary | See how much of your Codex limits you have used and how many Claude Code tokens you have burned, and when each resets. |
+| 📊 AI usage | AI usage, AI usage summary | See how much of your Claude and Codex limits you have used this session and this week, and when each resets, in the menu bar. |
 
 ## Making one
 

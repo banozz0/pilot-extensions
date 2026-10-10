@@ -1,23 +1,33 @@
 #!/usr/bin/env python3
-"""AI usage for Pilot: Codex limits and Claude Code tokens from this Mac's own logs, read only.
+"""AI usage for Pilot: how much of each AI plan's limits is used, from this Mac's own files, read only.
+
+Claude: Claude Code hands its status-line command `rate_limits` after every reply (`five_hour` and `seven_day`, each
+`used_percentage` and `resets_at` in epoch seconds), and Ghostex keeps that per session in
+~/.local/state/ghostex/agent-hooks/claude-statusline/<session>.json as `{"version", "updatedAt", "payload": {…}}`. The
+newest file that carries `rate_limits` wins; with none, Claude's share is unknown until the next reply.
 
 Codex: its session logs (~/.codex/sessions/YYYY/MM/DD/*.jsonl, and archived_sessions) carry `token_count` events whose
-`payload.rate_limits` holds `primary` (the 5-hour window) and `secondary` (the weekly one), each with `used_percent`,
-`window_minutes` and `resets_at` (epoch seconds; older Codex wrote `resets_in_seconds`, counted from the event's
-timestamp). Only the tail of the newest few logs is read.
+`payload.rate_limits` holds `primary` (the 5-hour window) and `secondary` (the week), each with `used_percent`,
+`window_minutes` and `resets_at` (older Codex wrote `resets_in_seconds`, counted from the event), plus `credits`. Only
+the tail of the newest few logs is read.
 
-Claude Code: every assistant line in ~/.claude/projects/**/*.jsonl carries `message.usage`. Logs changed in the last
-8 days are read from where the last run stopped and summed per minute into paths.cache, keyed by path, size and
-modification time, so a re-run reads only new bytes. A run that cannot finish in its time hands the rest to one
-detached refresh (a lock keeps two from overlapping). Claude's percentage of its limit is in no local log: unknown.
+Either way, a window whose reset time has passed since the numbers were read has reset: it shows 0%, with what it was.
 
-Nothing else is read: no credentials, tokens or auth files, and nothing goes over the network. `usage()` returns the
-numbers as a dict, so a top-bar item can reuse them.
+Gemini keeps no local limit, and its quota is only asked with its sign-in token, which Pilot never reads: "limit
+unknown" once the gemini CLI is on PATH, "Not set up" before.
+
+Claude Code tokens (a footnote on the page and in the detail, not a limit): every assistant line in
+~/.claude/projects/**/*.jsonl carries `message.usage`. Logs changed in the last 8 days are read from where the last run
+stopped and summed per minute into paths.cache, keyed by path, size and modification time. A run that cannot finish in
+its time hands the rest to one detached refresh (a lock keeps two from overlapping).
+
+Nothing else is read: no credentials, tokens, cookies or auth files of any provider, and nothing goes over the network.
 """
 import calendar
 import fcntl
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -32,14 +42,15 @@ LOCK_FILE = "refresh.lock"
 CACHE_VERSION = 1
 SEEN_KEEP = 512  # message ids remembered per log to fold repeated lines into one; repeats sit close together
 DETAIL_SCAN = 1.0  # seconds from start a detail may spend reading Claude logs; the rest goes to the background
-SUMMARY_SCAN = 25.0
-PAGE_SCAN = 3.0  # a page's command may take 5 s (Pilot story 161); a bar item's 2 s, so it reads less
-BAR_SCAN = 0.8
-SUMMARY_WAIT = 15.0
+PAGE_SCAN = 3.0  # a page's command may take 5 s; the bar and popover read no Claude logs at all
 REFRESH_SCAN = 120.0
 CODEX_TAILS = (256 * 1024, 4 * 1024 * 1024, 32 * 1024 * 1024)
+STATUSLINE = os.path.join(".local", "state", "ghostex", "agent-hooks", "claude-statusline")
+STATUSLINE_TRIES = 40  # newest status-line files read for one with rate_limits
 USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+WARN, ALERT = 60, 85
 BAR = 20
+SET_UP_AI = {"type": "open", "url": "pilot://open?page=ai", "title": "Set up in Pilot › AI…"}
 
 
 def send(message):
@@ -58,6 +69,54 @@ def parse_time(stamp):
         return datetime.fromisoformat(stamp).timestamp()
     except ValueError:
         return None
+
+
+def number(value):
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def window(name, percent, resets_at, now):
+    """One limit window; reset_since when its reset time has passed since it was read."""
+    return {"name": name, "percent": float(percent), "resets_at": resets_at,
+            "reset_since": resets_at is not None and resets_at <= now}
+
+
+# Claude
+
+
+def claude_limits(home, now):
+    """Claude's session and week from the newest Ghostex status-line file that carries rate_limits."""
+    folder = os.path.join(home, STATUSLINE)
+    try:
+        names = [n for n in os.listdir(folder) if n.endswith(".json")]
+    except OSError:
+        return {"state": "unknown"}
+    found = []
+    for name in names:
+        try:
+            found.append((os.stat(os.path.join(folder, name)).st_mtime, name))
+        except OSError:
+            continue
+    found.sort(reverse=True)
+    for mtime, name in found[:STATUSLINE_TRIES]:
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        payload = data.get("payload") if isinstance(data, dict) else None
+        limits = payload.get("rate_limits") if isinstance(payload, dict) else None
+        if not isinstance(limits, dict):
+            continue
+        windows = []
+        for key, label in (("five_hour", "Session"), ("seven_day", "Week")):
+            raw = limits.get(key)
+            percent = number(raw.get("used_percentage")) if isinstance(raw, dict) else None
+            if percent is not None:
+                windows.append(window(label, percent, number(raw.get("resets_at")), now))
+        if windows:
+            return {"state": "ok", "read_at": parse_time(data.get("updatedAt")) or mtime, "windows": windows}
+    return {"state": "unknown"}
 
 
 # Codex
@@ -114,17 +173,26 @@ def window_name(minutes, fallback):
     if not isinstance(minutes, int) or minutes <= 0:
         return fallback
     if minutes == 10080:
-        return "week"
+        return "Week"
     if minutes % 1440 == 0:
-        return "%d d" % (minutes // 1440)
+        return "%d days" % (minutes // 1440)
     if minutes % 60 == 0:
-        return "%d h" % (minutes // 60)
+        return "%d hours" % (minutes // 60)
     return "%d min" % minutes
 
 
-def codex_usage(home, now):
+def credits_text(raw):
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("unlimited") is True:
+        return "unlimited"
+    balance = raw.get("balance")
+    return balance if isinstance(balance, str) else None if number(balance) is None else str(balance)
+
+
+def codex_limits(home, now):
     if not any(os.path.isdir(os.path.join(home, ".codex", sub)) for sub in ("sessions", "archived_sessions")):
-        return {"state": "missing", "limits": []}
+        return {"state": "missing"}
     best = None
     for path in codex_files(home, now)[:3]:
         try:
@@ -134,24 +202,41 @@ def codex_usage(home, now):
         if found and (best is None or (found[0] or 0) > (best[0] or 0)):
             best = found
     if best is None:
-        return {"state": "none", "limits": []}
+        return {"state": "none"}
     stamp, raw = best
-    limits = []
-    for key, fallback in (("primary", "5 h"), ("secondary", "week")):
-        window = raw.get(key)
-        if not isinstance(window, dict) or not isinstance(window.get("used_percent"), (int, float)):
+    windows = []
+    for key, fallback in (("primary", "5 hours"), ("secondary", "Week")):
+        w = raw.get(key)
+        percent = number(w.get("used_percent")) if isinstance(w, dict) else None
+        if percent is None:
             continue
-        resets = window.get("resets_at")
-        if not isinstance(resets, (int, float)):
-            seconds = window.get("resets_in_seconds")
-            resets = stamp + seconds if isinstance(seconds, (int, float)) and stamp else None
-        limits.append({"name": window_name(window.get("window_minutes"), fallback),
-                       "window_minutes": window.get("window_minutes"), "used_percent": float(window["used_percent"]),
-                       "resets_at": resets, "reset_since": resets is not None and resets <= now})
-    return {"state": "ok" if limits else "none", "as_of": stamp, "limits": limits}
+        resets = number(w.get("resets_at"))
+        if resets is None:
+            seconds = number(w.get("resets_in_seconds"))
+            resets = stamp + seconds if seconds is not None and stamp else None
+        windows.append(window(window_name(w.get("window_minutes"), fallback), percent, resets, now))
+    if not windows:
+        return {"state": "none"}
+    plan = raw.get("plan_type")
+    return {"state": "ok", "read_at": stamp, "windows": windows, "credits": credits_text(raw.get("credits")),
+            "plan": plan if isinstance(plan, str) and plan else None}
 
 
-# Claude Code
+# Gemini
+
+
+def gemini_state():
+    return "installed" if shutil.which("gemini") else "missing"
+
+
+def limits(home=None, now=None):
+    """Every provider's limits as a dict; reads only the status-line store, Codex's logs and PATH."""
+    home = home or os.path.expanduser("~")
+    now = time.time() if now is None else now
+    return {"now": now, "claude": claude_limits(home, now), "codex": codex_limits(home, now), "gemini": gemini_state()}
+
+
+# Claude Code tokens (footnote)
 
 
 def claude_root(home):
@@ -271,7 +356,7 @@ def fresh(entry, size, mtime):
 
 
 def refresh_claude(home, cache_dir, now, deadline):
-    """Brings the cache up to date until the deadline: (entries by path, every log read, logs read, logs)."""
+    """Brings the cache up to date until the deadline: (entries by path, every log read)."""
     files = claude_files(home, now)
     cache = load_cache(cache_dir)
     kept, changed, done = {}, False, 0
@@ -293,23 +378,19 @@ def refresh_claude(home, cache_dir, now, deadline):
         done += finished
     if changed or len(kept) != len(cache):
         save_cache(cache_dir, kept, now)
-    return kept, done == len(files), done, len(files)
+    return kept, done == len(files)
 
 
-def take_lock(cache_dir, wait):
-    """The refresh lock, held until its file is closed; None when another refresh holds it past `wait` seconds."""
+def take_lock(cache_dir):
+    """The refresh lock, held until its file is closed; None while another refresh holds it."""
     os.makedirs(cache_dir, exist_ok=True)
     handle = open(os.path.join(cache_dir, LOCK_FILE), "a")
-    until = time.monotonic() + wait
-    while True:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return handle
-        except OSError:
-            if time.monotonic() >= until:
-                handle.close()
-                return None
-            time.sleep(0.1)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return handle
+    except OSError:
+        handle.close()
+        return None
 
 
 def spawn_refresh(cache_dir):
@@ -322,7 +403,7 @@ def spawn_refresh(cache_dir):
         pass
 
 
-def blocks(minutes):
+def token_blocks(minutes):
     """Five-hour blocks the way ccusage counts them: a block starts at the hour of the first message after a gap of
     5 h or more (or after the previous block's 5 h ran out) and ends 5 h after that hour. Only 8 days of logs are
     read, so a block chain with no 5 h gap in 8 days starts at the oldest message read."""
@@ -331,28 +412,23 @@ def blocks(minutes):
     for minute in sorted(minutes):
         t = minute * 60
         if not out or t >= out[-1]["start"] + BLOCK or t - last >= BLOCK:
-            out.append({"start": t - t % 3600, "tokens": [0, 0, 0, 0]})
-        for i, n in enumerate(minutes[minute]):
-            out[-1]["tokens"][i] += n
-        out[-1]["last"] = last = t
+            out.append({"start": t - t % 3600, "tokens": 0})
+        out[-1]["tokens"] += minutes[minute]
+        last = t
     return out
 
 
-def tokens_dict(sums):
-    return {"input": sums[0], "output": sums[1], "cache_write": sums[2], "cache_read": sums[3], "total": sum(sums)}
-
-
-def claude_usage(home, cache_dir, now, deadline, wait=0.0):
+def claude_tokens(run, now, deadline):
+    """Claude Code tokens in the last 7 days and in the running 5-hour block, read from its logs until `deadline`."""
+    home, cache_dir = os.path.expanduser("~"), (run.get("paths") or {}).get("cache")
     if not os.path.isdir(claude_root(home)):
         return {"state": "missing"}
-    busy = False
-    lock = take_lock(cache_dir, wait) if cache_dir else None
+    lock = take_lock(cache_dir) if cache_dir else None
     if cache_dir and lock is None:
-        entries, complete, busy = load_cache(cache_dir), False, True
-        read = total = None
+        entries, complete = load_cache(cache_dir), False
     else:
         try:
-            entries, complete, read, total = refresh_claude(home, cache_dir, now, deadline)
+            entries, complete = refresh_claude(home, cache_dir, now, deadline)
         finally:
             if lock:
                 lock.close()
@@ -364,31 +440,11 @@ def claude_usage(home, cache_dir, now, deadline, wait=0.0):
         for key, sums in (entry.get("minutes") or {}).items():
             minute = int(key)
             if since <= minute * 60 <= now + 60:
-                acc = minutes.setdefault(minute, [0, 0, 0, 0])
-                for i, n in enumerate(sums):
-                    acc[i] += n
-    week = [0, 0, 0, 0]
-    for minute, sums in minutes.items():
-        if minute * 60 >= now - 7 * DAY:
-            for i, n in enumerate(sums):
-                week[i] += n
-    found = blocks(minutes)
-    current = found[-1] if found and now < found[-1]["start"] + BLOCK else None
-    result = {"state": "ok", "complete": complete, "busy": busy, "files_read": read, "files": total,
-              "week": tokens_dict(week), "percent": None, "block": None,
-              "last_block_end": found[-1]["start"] + BLOCK if found and not current else None}
-    if current:
-        result["block"] = {"start": current["start"], "resets_at": current["start"] + BLOCK, "last": current["last"],
-                           "tokens": tokens_dict(current["tokens"])}
-    return result
-
-
-def usage(home=None, cache_dir=None, now=None, deadline=None, wait=0.0):
-    """Codex limits and Claude Code tokens as a dict; reads Claude logs until `deadline` (time.monotonic())."""
-    home = home or os.path.expanduser("~")
-    now = time.time() if now is None else now
-    deadline = START + DETAIL_SCAN if deadline is None else deadline
-    return {"now": now, "codex": codex_usage(home, now), "claude": claude_usage(home, cache_dir, now, deadline, wait)}
+                minutes[minute] = minutes.get(minute, 0) + sum(sums)
+    week = sum(n for minute, n in minutes.items() if minute * 60 >= now - 7 * DAY)
+    found = token_blocks(minutes)
+    block = found[-1]["tokens"] if found and now < found[-1]["start"] + BLOCK else None
+    return {"state": "ok", "complete": complete, "week": week, "block": block}
 
 
 # Words
@@ -417,21 +473,162 @@ def span(seconds):
     return "%d d %d h" % (days, hours) if hours else "%d d" % days
 
 
-def relative(moment, now):
-    return "in " + span(moment - now) if moment > now else span(now - moment) + " ago"
+def days_after(moment, now):
+    """Calendar days from now's day to moment's: 0 today, 1 tomorrow, -1 yesterday (noon to noon, so DST shifts round)."""
+    noon = lambda t: time.mktime(time.localtime(t)[:3] + (12, 0, 0, 0, 0, -1))
+    return int(round((noon(moment) - noon(now)) / DAY))
 
 
-def clock(moment, now):
-    """Local time with its day: today 18:33, tomorrow 09:00, yesterday 22:35, or Mon 13 Oct 09:00."""
+def stamp(moment, now):
+    """When numbers were read, short: 11:15 today, yesterday 17:27, Tue 17:27 this week, else 3 Oct 17:27."""
     day = time.localtime(moment)
-    days = (time.mktime(day[:3] + (12, 0, 0, 0, 0, -1)) - time.mktime(time.localtime(now)[:3] + (12, 0, 0, 0, 0, -1)))
-    days = int(round(days / DAY))
-    name = {0: "today", 1: "tomorrow", -1: "yesterday"}.get(days) or time.strftime("%a %-d %b", day)
-    return "%s %s" % (name, time.strftime("%H:%M", day))
+    days = -days_after(moment, now)
+    clock = time.strftime("%H:%M", day)
+    if days <= 0:
+        return clock
+    if days == 1:
+        return "yesterday " + clock
+    return time.strftime("%a " if days < 7 else "%-d %b ", day) + clock
 
 
-def when(moment, now):
-    return "%s (%s)" % (clock(moment, now), relative(moment, now))
+def until(moment, now):
+    """A reset time with its day and how long until it: today 18:04 (in 6 h 2 min)."""
+    day = time.localtime(moment)
+    name = {0: "today", 1: "tomorrow"}.get(days_after(moment, now)) or time.strftime("%a %-d %b", day)
+    return "%s %s (in %s)" % (name, time.strftime("%H:%M", day), span(moment - now))
+
+
+def tone(percent):
+    return "alert" if percent >= ALERT else "warn" if percent >= WARN else None
+
+
+def shown(w):
+    """What a window shows now: 0 once it reset since it was read."""
+    return 0.0 if w["reset_since"] else w["percent"]
+
+
+def reset_note(w, since):
+    return "reset since your last %s (was %d%%)" % (since, round(w["percent"]))
+
+
+def windows_text(name, provider):
+    return "%s %s" % (name, " · ".join("%s %d%%" % (w["name"].lower(), round(shown(w))) for w in provider["windows"]))
+
+
+CLAUDE_UNKNOWN = "Unknown until your next Claude Code reply."
+CODEX_WORDS = {"missing": ("no logs", "No Codex logs on this Mac. Run Codex once."),
+               "none": ("no run in 8 days", "No Codex run in 8 days, so both windows have reset.")}
+GEMINI_WORDS = {"missing": ("not set up", "The gemini CLI isn't installed on this Mac."),
+                "installed": ("limit unknown", "Gemini keeps no limit on this Mac, and asking Google needs your sign-in "
+                                               "token, which Pilot never reads.")}
+
+
+def summary_line(data):
+    claude, codex = data["claude"], data["codex"]
+    parts = [windows_text("Claude", claude) if claude["state"] == "ok" else "Claude unknown"]
+    if codex["state"] == "ok":
+        parts.append(windows_text("Codex", codex))
+    elif codex["state"] == "none":
+        parts.append("Codex no run in 8 days")
+    return " · ".join(parts)
+
+
+# Blocks: a section card per provider (Surfaces v2)
+
+
+def meter(w, since):
+    if w["reset_since"]:
+        return {"type": "meter", "label": w["name"], "percent": 0, "note": reset_note(w, since)}
+    m = {"type": "meter", "label": w["name"], "percent": round(w["percent"], 1), "tone": tone(w["percent"]) or "fine"}
+    if w["resets_at"]:
+        m["resetsAt"] = int(w["resets_at"])
+    else:
+        m["note"] = "reset time unknown"
+    return m
+
+
+def claude_card(claude, now):
+    if claude["state"] != "ok":
+        return {"type": "section", "title": "Claude", "subtitle": "unknown",
+                "blocks": [{"type": "markdown", "text": CLAUDE_UNKNOWN}]}
+    return {"type": "section", "title": "Claude", "subtitle": "Claude Code · read %s" % stamp(claude["read_at"], now),
+            "blocks": [meter(w, "Claude Code reply") for w in claude["windows"]]}
+
+
+def codex_card(codex, now):
+    if codex["state"] in CODEX_WORDS:
+        subtitle, text = CODEX_WORDS[codex["state"]]
+        return {"type": "section", "title": "Codex", "subtitle": subtitle, "blocks": [{"type": "markdown", "text": text}]}
+    subtitle = "last run %s" % stamp(codex["read_at"], now) if codex["read_at"] else "last run unknown"
+    if codex["plan"]:
+        subtitle = "%s · %s" % (codex["plan"], subtitle)
+    blocks = [meter(w, "run") for w in codex["windows"]]
+    if codex["credits"] is not None:
+        blocks.append({"type": "stats", "items": [{"label": "Credits", "value": codex["credits"]}]})
+    return {"type": "section", "title": "Codex", "subtitle": subtitle, "blocks": blocks}
+
+
+def gemini_card(state):
+    subtitle, text = GEMINI_WORDS[state]
+    blocks = [{"type": "markdown", "text": text}]
+    if state == "missing":
+        blocks.append({"type": "buttons", "actions": [SET_UP_AI]})
+    return {"type": "section", "title": "Gemini", "subtitle": subtitle, "blocks": blocks}
+
+
+def cards(data):
+    now = data["now"]
+    return [claude_card(data["claude"], now), codex_card(data["codex"], now), gemini_card(data["gemini"])]
+
+
+def token_note(tokens):
+    if tokens["state"] != "ok":
+        return "No Claude Code logs on this Mac (~/.claude/projects), so no token counts."
+    block = tokens["block"]
+    words = "Claude Code tokens: %s in the last 7 days, %s in this 5-hour block. They come from Claude Code's own " \
+            "logs and aren't your limit." % (short_tokens(tokens["week"]), "none" if block is None else short_tokens(block))
+    if not tokens["complete"]:
+        words = "Still counting Claude Code's logs, so these grow on the next refresh. " + words
+    return words
+
+
+def gauges(data):
+    """C and X, the session over the week, each in its loudest tone; a provider with no numbers has no gauge."""
+    out = []
+    for label, provider in (("C", data["claude"]), ("X", data["codex"])):
+        if provider["state"] == "ok":
+            values = [round(shown(w), 1) for w in provider["windows"]]
+        elif label == "X" and provider["state"] == "none":
+            values = [0, 0]
+        else:
+            continue
+        g = {"label": label, "meters": values}
+        level = tone(max(values))
+        if level:
+            g["tone"] = level
+        out.append(g)
+    return out
+
+
+# Commands
+
+
+def show_bar(run):
+    data = limits()
+    if run.get("surface") == "popover":
+        send({"type": "blocks", "blocks": cards(data) + [{"type": "markdown", "text": "Pilot reads no sign-in tokens."}]})
+        return
+    found = gauges(data)
+    top = max((m for g in found for m in g["meters"]), default=0)
+    send({"type": "bar", "text": "" if found else "AI", "tone": tone(top), "gauges": found, "blocks": cards(data)})
+
+
+def show_page(run):
+    data = limits()
+    tokens = claude_tokens(run, data["now"], START + PAGE_SCAN)
+    send({"type": "blocks", "blocks": cards(data) + [
+        {"type": "markdown", "text": token_note(tokens)},
+        {"type": "buttons", "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]}]})
 
 
 def bar(fraction):
@@ -439,181 +636,51 @@ def bar(fraction):
     return "`%s%s`" % ("▓" * filled, "░" * (BAR - filled))
 
 
-def breakdown(tokens):
-    return "in %s · out %s · cache write %s · cache read %s" % tuple(
-        short_tokens(tokens[k]) for k in ("input", "output", "cache_write", "cache_read"))
-
-
-def summary_line(data):
-    codex = data["codex"]
-    if codex["state"] == "ok":
-        parts = ["%s %s" % (l["name"], "reset" if l["reset_since"] else "%d%%" % round(l["used_percent"]))
-                 for l in codex["limits"]]
-        line = "Codex " + " · ".join(parts)
-    elif codex["state"] == "none":
-        line = "Codex no use in 8 days"
-    else:
-        line = "Codex no logs"
-    claude = data["claude"]
-    if claude["state"] == "missing":
-        tail = "Claude no logs"
-    elif claude["block"]:
-        tail = "Claude block %s tokens" % short_tokens(claude["block"]["tokens"]["total"])
-    else:
-        tail = "Claude no block running"
-    if claude["state"] == "ok" and not claude["complete"]:
-        tail += " (still counting)"
-    return "%s · %s" % (line, tail)
-
-
-def codex_section(codex, now, md, rows):
-    md.append("## Codex")
-    if codex["state"] == "missing":
-        md.append("No Codex logs on this Mac (~/.codex/sessions).")
-        return
-    if codex["state"] == "none":
-        md.append("No Codex use logged in the last 8 days, so every limit has reset.")
-        return
-    for limit in codex["limits"]:
-        name, pct, resets = limit["name"], limit["used_percent"], limit["resets_at"]
-        if limit["reset_since"]:
-            md.append("- **%s** %s reset %s, nothing logged since" % (name, bar(0), when(resets, now)))
-            rows += [{"label": "Codex %s used" % name, "text": "0%% (was %d%%, reset since)" % round(pct)},
-                     {"label": "Codex %s reset" % name, "text": when(resets, now)}]
-            continue
-        reset_text = when(resets, now) if resets else "unknown"
-        md.append("- **%s** %s %d%% · resets %s" % (name, bar(pct / 100.0), round(pct), reset_text))
-        rows += [{"label": "Codex %s used" % name, "text": "%d%%" % round(pct)},
-                 {"label": "Codex %s resets" % name, "text": reset_text}]
-    if codex.get("as_of"):
-        md.append("")
-        md.append("From the newest Codex log, %s." % when(codex["as_of"], now))
-        rows.append({"label": "Codex as of", "text": when(codex["as_of"], now)})
-
-
-def claude_section(claude, now, md, rows):
-    md.append("## Claude Code")
-    if claude["state"] == "missing":
-        md.append("No Claude Code logs on this Mac (~/.claude/projects).")
-        return
-    if not claude["complete"]:
-        if claude["files"]:
-            md.append("Still counting: %d of %d logs read; open again in a few seconds. Numbers so far:"
-                      % (claude["files_read"], claude["files"]))
+def windows_markdown(provider, since, now, md, rows, title):
+    for w in provider["windows"]:
+        if w["reset_since"]:
+            note = reset_note(w, since)
         else:
-            md.append("Still counting in the background; open again in a few seconds. Numbers so far:")
-        md.append("")
-    block = claude["block"]
-    if block:
-        tokens = block["tokens"]
-        elapsed = now - block["start"]
-        md.append("- **This block** %s tokens since %s · resets %s"
-                  % (short_tokens(tokens["total"]), time.strftime("%H:%M", time.localtime(block["start"])),
-                     when(block["resets_at"], now)))
-        md.append("- **Block time** %s %s of 5 h" % (bar(elapsed / BLOCK), span(elapsed)))
-        rows += [{"label": "Claude block tokens", "text": "{:,}".format(tokens["total"])},
-                 {"label": "Claude block split", "text": breakdown(tokens)},
-                 {"label": "Claude block resets", "text": when(block["resets_at"], now)}]
-    else:
-        ended = claude["last_block_end"]
-        md.append("- **This block** none running%s" % (", the last ended %s" % when(ended, now) if ended else ""))
-        rows.append({"label": "Claude block tokens", "text": "0 (no block running)"})
-    week = claude["week"]
-    md.append("- **Last 7 days** %s tokens" % short_tokens(week["total"]))
-    rows += [{"label": "Claude 7 days tokens", "text": "{:,}".format(week["total"])},
-             {"label": "Claude 7 days split", "text": breakdown(week)},
-             {"label": "Claude % of limit", "text": "unknown (not in local logs)"}]
-    md.append("")
-    md.append("Tokens count input, output and cache, as ccusage does. How much of Claude's limit that is "
-              "is not in any local log, so it is unknown.")
+            note = "resets " + until(w["resets_at"], now) if w["resets_at"] else "reset time unknown"
+        text = "%d%% · %s" % (round(shown(w)), note)
+        md.append("- **%s** %s %s" % (w["name"], bar(shown(w) / 100.0), text))
+        rows.append({"label": "%s %s" % (title, w["name"].lower()), "text": text})
 
 
 def show_usage(run):
-    data = usage(cache_dir=(run.get("paths") or {}).get("cache"))
-    now = data["now"]
-    md, rows = [], []
-    codex_section(data["codex"], now, md, rows)
-    md.append("")
-    claude_section(data["claude"], now, md, rows)
-    actions = [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]
-    if data["claude"]["state"] == "ok" and not data["claude"]["complete"]:
-        actions.insert(0, {"type": "push", "command": "usage", "title": "Count again"})
-    send({"type": "detail", "markdown": "\n".join(md) + "\n", "metadata": rows, "actions": actions})
+    data = limits()
+    now, claude, codex = data["now"], data["claude"], data["codex"]
+    tokens = claude_tokens(run, now, START + DETAIL_SCAN)
+    md, rows = ["## Claude"], []
+    if claude["state"] == "ok":
+        windows_markdown(claude, "Claude Code reply", now, md, rows, "Claude")
+        md += ["", "From Claude Code's status line, read %s." % stamp(claude["read_at"], now)]
+    else:
+        md.append(CLAUDE_UNKNOWN)
+        rows.append({"label": "Claude", "text": "unknown"})
+    md += ["", "## Codex"]
+    if codex["state"] == "ok":
+        windows_markdown(codex, "run", now, md, rows, "Codex")
+        if codex["credits"] is not None:
+            md.append("- **Credits** %s" % codex["credits"])
+            rows.append({"label": "Codex credits", "text": codex["credits"]})
+        if codex["read_at"]:
+            md += ["", "From your last Codex run, %s." % stamp(codex["read_at"], now)]
+    else:
+        md.append(CODEX_WORDS[codex["state"]][1])
+    subtitle, text = GEMINI_WORDS[data["gemini"]]
+    md += ["", "## Gemini", "**%s.** %s" % (subtitle.capitalize(), text), "", "---", "", token_note(tokens)]
+    send({"type": "detail", "markdown": "\n".join(md) + "\n", "metadata": rows,
+          "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]})
 
 
 def show_summary(run):
-    data = usage(cache_dir=(run.get("paths") or {}).get("cache"), deadline=START + SUMMARY_SCAN, wait=SUMMARY_WAIT)
-    send({"type": "hud", "text": summary_line(data)})
-
-
-# Surfaces (Pilot story 161): the page in Pilot's app window and the top-bar item.
-
-
-def tone(percent):
-    return "alert" if percent >= 90 else "warn" if percent >= 70 else "fine"
-
-
-def live_limits(data):
-    """Codex's limits that have not reset since the log, as (name, percent, resets_at)."""
-    codex = data["codex"]
-    if codex["state"] != "ok":
-        return []
-    return [(l["name"], l["used_percent"], l["resets_at"]) for l in codex["limits"] if not l["reset_since"]]
-
-
-def limit_meters(data, now):
-    return [{"type": "meter", "label": "Codex %s" % name, "percent": round(pct, 1), "tone": tone(pct),
-             "note": "resets %s" % when(resets, now) if resets else "reset time unknown"}
-            for name, pct, resets in live_limits(data)]
-
-
-def show_page(run):
-    data = usage(cache_dir=(run.get("paths") or {}).get("cache"), deadline=START + PAGE_SCAN)
-    now, codex, claude = data["now"], data["codex"], data["claude"]
-    stats = [{"label": "Codex %s" % name, "value": "%d%%" % round(pct), "tone": tone(pct)} for name, pct, _ in live_limits(data)]
-    if claude["state"] == "ok":
-        block = claude["block"]
-        stats.append({"label": "Claude block", "value": short_tokens(block["tokens"]["total"]) if block else "none"})
-        stats.append({"label": "Claude 7 days", "value": short_tokens(claude["week"]["total"])})
-    blocks = [{"type": "stats", "items": stats}] if stats else []
-    blocks += limit_meters(data, now)
-    if codex["state"] != "ok":
-        blocks.append({"type": "markdown", "text": "No Codex logs on this Mac (~/.codex/sessions)." if codex["state"] == "missing"
-                       else "No Codex use logged in the last 8 days, so every limit has reset."})
-    if claude["state"] == "missing":
-        blocks.append({"type": "markdown", "text": "No Claude Code logs on this Mac (~/.claude/projects)."})
-    else:
-        block = claude["block"]
-        if block:
-            elapsed = now - block["start"]
-            blocks.append({"type": "meter", "label": "Claude block time", "percent": round(100 * min(elapsed / BLOCK, 1), 1),
-                           "note": "%s tokens since %s · resets %s" % (short_tokens(block["tokens"]["total"]),
-                                                                       time.strftime("%H:%M", time.localtime(block["start"])),
-                                                                       when(block["resets_at"], now))})
-        words = "Claude tokens count input, output and cache. Claude's share of its limit is in no local log, so it is unknown."
-        if not claude["complete"]:
-            words = "Still counting Claude's logs; this page asks again on its own. " + words
-        blocks.append({"type": "markdown", "text": words})
-    blocks.append({"type": "buttons", "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]})
-    send({"type": "blocks", "blocks": blocks})
-
-
-def show_bar(run):
-    data = usage(cache_dir=(run.get("paths") or {}).get("cache"), deadline=START + BAR_SCAN)
-    limits = live_limits(data)
-    if limits:
-        top = max(pct for _, pct, _ in limits)
-        text, level = "AI %d%%" % round(top), tone(top)
-    elif data["claude"]["state"] == "ok" and data["claude"]["block"]:
-        text, level = "AI %s" % short_tokens(data["claude"]["block"]["tokens"]["total"]), None
-    else:
-        text, level = "", None
-    send({"type": "bar", "text": text, "tone": level, "blocks": limit_meters(data, data["now"])})
+    send({"type": "hud", "text": summary_line(limits())})
 
 
 def background_refresh(cache_dir):
     signal.alarm(int(REFRESH_SCAN) + 30)
-    lock = take_lock(cache_dir, 0)
+    lock = take_lock(cache_dir)
     if lock is None:
         return
     try:

@@ -2,7 +2,6 @@ import fcntl
 import json
 import os
 import subprocess
-import threading
 import time
 
 from harness import EXTENSIONS, ExtensionTestCase
@@ -24,7 +23,7 @@ def window(pct, minutes, resets_at=None, resets_in=None):
     return w
 
 
-def codex_event(t, primary, secondary, limit_id="codex"):
+def codex_event(t, primary, secondary, limit_id="codex", credits=None):
     """A token_count line as Codex writes it (shape read from a real 2026-10 log)."""
     usage = {"input_tokens": 1000, "cached_input_tokens": 900, "cache_write_input_tokens": 0, "output_tokens": 10,
              "reasoning_output_tokens": 0, "total_tokens": 1010}
@@ -33,9 +32,19 @@ def codex_event(t, primary, secondary, limit_id="codex"):
                         "info": {"total_token_usage": usage, "last_token_usage": usage, "model_context_window": 258400},
                         "rate_limits": {"limit_id": limit_id, "limit_name": None, "primary": primary,
                                         "secondary": secondary,
-                                        "credits": {"has_credits": False, "unlimited": False, "balance": "0"},
+                                        "credits": credits or {"has_credits": False, "unlimited": False, "balance": "0"},
                                         "individual_limit": None, "spend_control_reached": None, "plan_type": None,
                                         "rate_limit_reached_type": None}}}
+
+
+def statusline(updated, five=None, week=None):
+    """A Ghostex status-line file as it stores Claude Code's status-line input (shape read live 2026-10-10)."""
+    payload = {"session_id": "s", "transcript_path": "/x.jsonl", "cwd": "/x", "model": {"id": "claude-opus-5-5"},
+               "context_window": {"total_input_tokens": 5, "used_percentage": 12}, "fast_mode": False}
+    if five or week:
+        payload["rate_limits"] = {k: {"used_percentage": v[0], "resets_at": int(v[1])}
+                                  for k, v in (("five_hour", five), ("seven_day", week)) if v}
+    return {"version": 1, "updatedAt": iso(updated), "payload": payload}
 
 
 def claude_line(t, msg_id, inp=0, out=0, write=0, read=0):
@@ -50,6 +59,14 @@ def claude_line(t, msg_id, inp=0, out=0, write=0, read=0):
             "sessionId": "s", "version": "2.1.0"}
 
 
+def card(blocks, title):
+    return next(b for b in blocks if b["type"] == "section" and b["title"] == title)
+
+
+def hhmm(t):
+    return time.strftime("%H:%M", time.localtime(t))
+
+
 class AIUsageTests(ExtensionTestCase):
     EXTENSION = "ai-usage"
 
@@ -58,16 +75,23 @@ class AIUsageTests(ExtensionTestCase):
         self.now = time.time()
         self.codex = self.box.home / ".codex" / "sessions" / "2026" / "10" / "10"
         self.projects = self.box.home / ".claude" / "projects"
-        for secret in (self.box.home / ".codex" / "auth.json", self.box.home / ".claude" / ".credentials.json"):
+        self.store = self.box.home / ".local" / "state" / "ghostex" / "agent-hooks" / "claude-statusline"
+        for secret in (self.box.home / ".codex" / "auth.json", self.box.home / ".claude" / ".credentials.json",
+                       self.box.home / ".gemini" / "oauth_creds.json"):
             secret.parent.mkdir(parents=True, exist_ok=True)
             secret.write_text(json.dumps({"bot": SECRET_SAMPLE}))
 
     def write(self, path, lines, age=0, append=False):
+        """JSON lines, or a str written as it is."""
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a" if append else "w") as f:
-            f.write("".join(json.dumps(line, separators=(",", ":")) + "\n" for line in lines))
+            f.write(lines if isinstance(lines, str) else
+                    "".join(json.dumps(line, separators=(",", ":")) + "\n" for line in lines))
         os.utime(path, (self.now - age, self.now - age))
         return path
+
+    def status(self, name, data, age=0):
+        self.write(self.store / ("%s.json" % name), data if isinstance(data, str) else json.dumps(data), age)
 
     def codex_log(self, name, events, age=0):
         meta = {"timestamp": iso(self.now - HOUR), "type": "session_meta", "payload": {"id": name, "cwd": "/x"}}
@@ -94,10 +118,20 @@ class AIUsageTests(ExtensionTestCase):
                    age=9 * DAY)
         return main
 
-    def detail(self, **kwargs):
-        r = self.run_ext("usage", home=self.box.home, **kwargs)
-        self.assertLess(r.elapsed, 2)
-        self.assertNotIn(SECRET_SAMPLE, r.stdout)
+    def sven_like(self):
+        """Claude at 39% and 26%; Codex last ran 4 days ago, its 5 hours reset since (was 10%), its week at 67%."""
+        n = self.now
+        self.status("new", statusline(n - 3 * MIN, (39, n + 40 * MIN), (26, n + 5 * DAY)), age=3 * MIN)
+        self.codex_log("last", [codex_event(n - 4 * DAY, window(10.0, 300, n - 4 * DAY + 2 * HOUR),
+                                            window(67.0, 10080, n + 6 * HOUR))], age=4 * DAY)
+
+    def check_quiet(self, result):
+        self.assertNotIn(SECRET_SAMPLE, result)
+        return result
+
+    def detail(self):
+        r = self.run_ext("usage", home=self.box.home)
+        self.check_quiet(r.stdout)
         d = r.detail
         self.assertIsInstance(d["markdown"], str)
         for row in d["metadata"]:
@@ -109,106 +143,146 @@ class AIUsageTests(ExtensionTestCase):
 
     def hud(self):
         r = self.run_ext("summary", home=self.box.home)
-        self.assertNotIn(SECRET_SAMPLE, r.stdout)
+        self.check_quiet(r.stdout)
         huds = r.of_type("hud")
         self.assertEqual(len(huds), 1, r.stdout)
         return huds[0]["text"]
 
-    def test_codex_limits_from_the_newest_log_with_bars_and_reset_times(self):
+    def test_gauges_and_cards_from_the_status_line_and_the_codex_log(self):
+        self.sven_like()
+        bar = self.bar(home=self.box.home)
+        self.check_quiet(json.dumps(bar))
+        self.assertEqual(bar["gauges"], [{"label": "C", "meters": [39, 26]},
+                                         {"label": "X", "meters": [0, 67], "tone": "warn"}])
+        self.assertEqual((bar["text"], bar["tone"]), ("", "warn"))
+        blocks = self.popover(home=self.box.home)
+        self.assertEqual(blocks[:3], bar["blocks"], "the bar line carries the popover's cards until it answers")
+        claude = card(blocks, "Claude")
+        self.assertEqual(claude["subtitle"], "Claude Code · read %s" % hhmm(self.now - 3 * MIN))
+        self.assertEqual(claude["blocks"], [
+            {"type": "meter", "label": "Session", "percent": 39, "tone": "fine", "resetsAt": int(self.now + 40 * MIN)},
+            {"type": "meter", "label": "Week", "percent": 26, "tone": "fine", "resetsAt": int(self.now + 5 * DAY)}])
+        codex = card(blocks, "Codex")
+        self.assertTrue(codex["subtitle"].startswith("last run ") and codex["subtitle"].endswith(hhmm(self.now - 4 * DAY)),
+                        codex["subtitle"])
+        self.assertEqual(codex["blocks"], [
+            {"type": "meter", "label": "5 hours", "percent": 0, "note": "reset since your last run (was 10%)"},
+            {"type": "meter", "label": "Week", "percent": 67, "tone": "warn", "resetsAt": int(self.now + 6 * HOUR)},
+            {"type": "stats", "items": [{"label": "Credits", "value": "0"}]}])
+        self.assertEqual(blocks[-1], {"type": "markdown", "text": "Pilot reads no sign-in tokens."})
+        self.assertEqual(self.hud(), "Claude session 39% · week 26% · Codex 5 hours 0% · week 67%")
+
+    def test_the_newest_status_line_with_limits_wins(self):
+        n = self.now
+        self.status("old", statusline(n - DAY, (90, n + HOUR), (90, n + DAY)), age=DAY)
+        self.status("mid", statusline(n - 10 * MIN, (12, n + HOUR), (34, n + DAY)), age=10 * MIN)
+        self.status("newer-no-limits", statusline(n - 5 * MIN), age=5 * MIN)
+        self.status("newest-half-written", '{"version":1,"payl', age=0)
+        self.assertEqual(self.bar(home=self.box.home)["gauges"], [{"label": "C", "meters": [12, 34]}])
+
+    def test_claude_unknown_without_ghostex_or_a_reply(self):
+        for setup in (lambda: None, lambda: self.status("bare", statusline(self.now))):
+            setup()
+            claude = card(self.popover(home=self.box.home), "Claude")
+            self.assertEqual(claude["blocks"], [{"type": "markdown", "text": "Unknown until your next Claude Code reply."}])
+            bar = self.bar(home=self.box.home)
+            self.assertNotIn("C", [g["label"] for g in bar["gauges"]])
+        self.assertTrue(self.hud().startswith("Claude unknown"))
+
+    def test_a_window_that_reset_since_shows_0_with_what_it_was(self):
+        n = self.now
+        self.status("s", statusline(n - 6 * HOUR, (88, n - HOUR), (61, n + DAY)), age=6 * HOUR)
+        claude = card(self.popover(home=self.box.home), "Claude")
+        self.assertEqual(claude["blocks"][0], {"type": "meter", "label": "Session", "percent": 0,
+                                               "note": "reset since your last Claude Code reply (was 88%)"})
+        self.assertEqual(claude["subtitle"], "Claude Code · read %s" % hhmm(n - 6 * HOUR)
+                         if time.localtime(n - 6 * HOUR)[:3] == time.localtime(n)[:3]
+                         else "Claude Code · read yesterday %s" % hhmm(n - 6 * HOUR))
+        self.assertEqual(self.bar(home=self.box.home)["gauges"], [{"label": "C", "meters": [0, 61], "tone": "warn"}])
+
+    def test_tones_amber_from_60_red_from_85(self):
+        n = self.now
+        self.status("s", statusline(n, (85, n + HOUR), (59.5, n + DAY)))
+        self.codex_log("one", [codex_event(n - MIN, window(60.0, 300, n + HOUR), window(12.0, 10080, n + DAY))])
+        bar = self.bar(home=self.box.home)
+        self.assertEqual(bar["gauges"], [{"label": "C", "meters": [85, 59.5], "tone": "alert"},
+                                         {"label": "X", "meters": [60, 12], "tone": "warn"}])
+        self.assertEqual(bar["tone"], "alert")
+        tones = [m["tone"] for c in bar["blocks"][:2] for m in c["blocks"] if m["type"] == "meter"]
+        self.assertEqual(tones, ["alert", "fine", "warn", "fine"])
+
+    def test_codex_older_shape_newest_log_and_other_limit_ids(self):
         n = self.now
         self.codex_log("older", [codex_event(n - 2 * DAY, window(90.0, 300, n + HOUR), window(95.0, 10080, n + DAY))],
                        age=2 * DAY)
         self.codex_log("newest", [
             codex_event(n - 20 * MIN, window(40.0, 300, n + HOUR), window(10.0, 10080, n + DAY)),
-            codex_event(n - 10 * MIN, window(52.0, 300, n + 2 * HOUR + 10 * MIN + 30),
-                        window(18.0, 10080, n + 3 * DAY + 2 * HOUR + 30)),
+            codex_event(n - 10 * MIN, window(52.0, 300, resets_in=2 * HOUR + 10 * MIN + 30), window(18.0, 10080, n + DAY),
+                        credits={"has_credits": True, "unlimited": True, "balance": None}),
             codex_event(n - 5 * MIN, None, None, limit_id="premium")])
-        d, facts = self.detail()
-        self.assertIn("▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░` 52%", d["markdown"])
-        self.assertIn("▓▓▓▓░░░░░░░░░░░░░░░░` 18%", d["markdown"])
-        self.assertEqual(facts["Codex 5 h used"], "52%")
-        self.assertEqual(facts["Codex week used"], "18%")
-        local = time.strftime("%H:%M", time.localtime(n + 2 * HOUR + 10 * MIN + 30))
-        self.assertTrue(facts["Codex 5 h resets"].endswith("%s (in 2 h 10 min)" % local), facts["Codex 5 h resets"])
-        self.assertTrue(facts["Codex week resets"].endswith("(in 3 d 2 h)"), facts["Codex week resets"])
-        self.assertIn("10 min ago", facts["Codex as of"])
-        self.assertTrue(self.hud().startswith("Codex 5 h 52% · week 18% · "))
+        codex = card(self.popover(home=self.box.home), "Codex")
+        self.assertEqual([(m.get("label"), m.get("percent")) for m in codex["blocks"]][:2], [("5 hours", 52), ("Week", 18)])
+        self.assertEqual(codex["blocks"][0]["resetsAt"], int(n - 10 * MIN) + 2 * HOUR + 10 * MIN + 30)
+        self.assertEqual(codex["blocks"][2]["items"], [{"label": "Credits", "value": "unlimited"}])
+        self.assertEqual(codex["subtitle"], "last run %s" % hhmm(n - 10 * MIN))
 
-    def test_codex_older_shape_and_a_window_that_reset_since(self):
-        n = self.now
-        self.codex_log("one", [codex_event(n - 10 * MIN, window(10.0, 300, resets_at=n - HOUR),
-                                           window(30.0, 10080, resets_in=10 * MIN + HOUR + 30))])
-        d, facts = self.detail()
-        self.assertEqual(facts["Codex 5 h used"], "0% (was 10%, reset since)")
-        self.assertIn("nothing logged since", d["markdown"])
-        self.assertTrue(facts["Codex week resets"].endswith("(in 1 h)"), facts["Codex week resets"])
-        self.assertTrue(self.hud().startswith("Codex 5 h reset · week 30% · "))
-
-    def test_codex_quiet_for_8_days_or_absent(self):
-        d, _ = self.detail()
-        self.assertIn("No Codex logs on this Mac", d["markdown"])
+    def test_codex_absent_or_quiet_for_8_days(self):
+        codex = card(self.popover(home=self.box.home), "Codex")
+        self.assertEqual(codex["blocks"][0]["text"], "No Codex logs on this Mac. Run Codex once.")
+        self.assertNotIn("X", [g["label"] for g in self.bar(home=self.box.home)["gauges"]])
         self.codex_log("ancient", [codex_event(self.now - 9 * DAY, window(80.0, 300, self.now), None)], age=9 * DAY)
-        d, facts = self.detail()
-        self.assertIn("No Codex use logged in the last 8 days", d["markdown"])
-        self.assertNotIn("Codex 5 h used", facts)
-        self.assertTrue(self.hud().startswith("Codex no use in 8 days · "))
+        codex = card(self.popover(home=self.box.home), "Codex")
+        self.assertEqual(codex["subtitle"], "no run in 8 days")
+        self.assertEqual(self.bar(home=self.box.home)["gauges"], [{"label": "X", "meters": [0, 0]}])
 
-    def test_claude_block_and_week_tokens(self):
-        self.claude_fixture()
-        d, facts = self.detail()
-        self.assertEqual(facts["Claude block tokens"], "1,200,000")
-        self.assertEqual(facts["Claude block split"], "in 100 · out 300k · cache write 1k · cache read 899k")
-        self.assertEqual(facts["Claude 7 days tokens"], "1,205,000")
-        self.assertEqual(facts["Claude % of limit"], "unknown (not in local logs)")
-        start = (self.now - 90 * MIN) // HOUR * HOUR
-        self.assertIn("since %s" % time.strftime("%H:%M", time.localtime(start)), d["markdown"])
-        self.assertTrue(facts["Claude block resets"].startswith("today ") or facts["Claude block resets"].startswith(
-            "tomorrow "))
-        self.assertIn(time.strftime("%H:%M", time.localtime(start + 5 * HOUR)), facts["Claude block resets"])
-        self.assertIn("**Last 7 days** 1.2M tokens", d["markdown"])
-        self.assertNotIn("Still counting", d["markdown"])
-        self.assertEqual([a["title"] for a in d["actions"]], ["Copy summary"])
-        self.assertTrue(self.hud().endswith(" · Claude block 1.2M tokens"))
+    def test_gemini_not_set_up_until_its_cli_is_on_path(self):
+        gemini = card(self.popover(home=self.box.home), "Gemini")
+        self.assertEqual(gemini["subtitle"], "not set up")
+        self.assertEqual(gemini["blocks"][1]["actions"],
+                         [{"type": "open", "url": "pilot://open?page=ai", "title": "Set up in Pilot › AI…"}])
+        self.box.shim("gemini")
+        gemini = card(self.popover(home=self.box.home), "Gemini")
+        self.assertEqual(gemini["subtitle"], "limit unknown")
+        self.assertEqual(self.box.shim_calls(), [], "the gemini CLI is looked for, never run")
 
-    def test_page_and_bar_show_the_limits_and_the_block(self):
-        n = self.now
-        self.codex_log("newest", [codex_event(n - 10 * MIN, window(72.0, 300, n + 2 * HOUR + 30), window(18.0, 10080, n + 3 * DAY))])
+    def test_nothing_known_still_shows_an_item_to_click(self):
+        bar = self.bar(home=self.box.home)
+        self.assertEqual((bar["text"], bar["tone"], bar["gauges"]), ("AI", None, []))
+        self.assertEqual([c["title"] for c in bar["blocks"]], ["Claude", "Codex", "Gemini"])
+
+    def test_page_cards_then_the_token_footnote(self):
+        self.sven_like()
         self.claude_fixture()
         blocks = self.page(home=self.box.home)
-        self.assertEqual(blocks[0]["items"], [
-            {"label": "Codex 5 h", "value": "72%", "tone": "warn"}, {"label": "Codex week", "value": "18%", "tone": "fine"},
-            {"label": "Claude block", "value": "1.2M"}, {"label": "Claude 7 days", "value": "1.2M"}])
-        meters = [b for b in blocks if b["type"] == "meter"]
-        self.assertEqual([(m["label"], m["percent"]) for m in meters][:2], [("Codex 5 h", 72.0), ("Codex week", 18.0)])
-        self.assertTrue(meters[0]["note"].endswith("(in 2 h)"), meters[0]["note"])
-        self.assertEqual(meters[2]["label"], "Claude block time")
-        self.assertEqual(blocks[-1]["actions"][0]["title"], "Copy summary")
-        bar = self.bar(home=self.box.home)
-        self.assertEqual((bar["text"], bar["tone"]), ("AI 72%", "warn"))
-        self.assertEqual([b["label"] for b in bar["blocks"]], ["Codex 5 h", "Codex week"])
+        self.assertEqual([b.get("title") for b in blocks[:3]], ["Claude", "Codex", "Gemini"])
+        self.assertEqual(blocks[3]["text"], "Claude Code tokens: 1.2M in the last 7 days, 1.2M in this 5-hour block. "
+                                            "They come from Claude Code's own logs and aren't your limit.")
+        self.assertEqual(blocks[4]["actions"][0]["text"], "Claude session 39% · week 26% · Codex 5 hours 0% · week 67%")
+        self.check_quiet(json.dumps(blocks))
 
-    def test_bar_hides_with_nothing_to_say(self):
-        bar = self.bar(home=self.box.home)
-        self.assertEqual((bar["text"], bar["blocks"]), ("", []))
-        self.assertIn("No Codex logs", json.dumps(self.page(home=self.box.home)))
+    def test_detail_names_every_provider(self):
+        self.sven_like()
+        self.claude_fixture()
+        d, facts = self.detail()
+        self.assertTrue(facts["Claude session"].startswith("39% · resets today ") or
+                        facts["Claude session"].startswith("39% · resets tomorrow "), facts["Claude session"])
+        self.assertEqual(facts["Codex 5 hours"], "0% · reset since your last run (was 10%)")
+        self.assertTrue(facts["Codex week"].startswith("67% · resets "), facts["Codex week"])
+        self.assertEqual(facts["Codex credits"], "0")
+        self.assertIn("▓▓▓▓▓▓▓▓░░░░░░░░░░░░` 39%", d["markdown"])
+        self.assertIn("## Gemini\n**Not set up.** The gemini CLI", d["markdown"])
+        self.assertIn("Claude Code tokens: 1.2M in the last 7 days", d["markdown"])
 
     def test_no_block_running_after_a_quiet_5_hours(self):
         self.write(self.projects / "p" / "s.jsonl", [claude_line(self.now - 6 * HOUR, "msg_1", read=4000)])
-        d, facts = self.detail()
-        self.assertEqual(facts["Claude block tokens"], "0 (no block running)")
-        self.assertIn("none running, the last ended", d["markdown"])
-        self.assertEqual(facts["Claude 7 days tokens"], "4,000")
-        self.assertTrue(self.hud().endswith("Claude no block running"))
+        self.assertIn("4k in the last 7 days, none in this 5-hour block", self.page(home=self.box.home)[3]["text"])
 
-    def test_no_logs_at_all(self):
-        d, _ = self.detail()
-        self.assertIn("No Claude Code logs on this Mac", d["markdown"])
-        self.assertEqual(self.hud(), "Codex no logs · Claude no logs")
+    def test_no_claude_logs_no_token_counts(self):
+        self.assertIn("No Claude Code logs on this Mac", self.page(home=self.box.home)[3]["text"])
 
     def test_a_rerun_reads_only_the_new_bytes(self):
         main = self.claude_fixture()
-        _, facts = self.detail()
-        self.assertEqual(facts["Claude block tokens"], "1,200,000")
+        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[3]["text"])
         cache = json.loads((self.box.cache / "claude-usage.json").read_text())["files"]
         self.assertEqual(cache[str(main)]["offset"], main.stat().st_size)
         self.assertNotIn(str(self.projects / "-Users-x-old" / "s0.jsonl"), cache)
@@ -216,23 +290,17 @@ class AIUsageTests(ExtensionTestCase):
         text = main.read_text()
         main.write_text(text.replace('"cache_read_input_tokens":698900', '"cache_read_input_tokens":111111'))
         self.assertEqual(len(main.read_text()), len(text))
-        self.write(main, [claude_line(self.now - 5 * MIN, "msg_c", out=1000)], append=True)
-        _, facts = self.detail()
-        self.assertEqual(facts["Claude block tokens"], "1,201,000")
+        self.write(main, [claude_line(self.now - 5 * MIN, "msg_c", out=300000)], append=True)
+        self.assertIn("1.5M in this 5-hour block", self.page(home=self.box.home)[3]["text"])
 
     def test_while_another_refresh_runs_it_answers_from_the_cache_at_once(self):
         self.claude_fixture()
-        self.detail()
+        self.page(home=self.box.home)
         with open(self.box.cache / "refresh.lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            d, facts = self.detail()
-            self.assertIn("Still counting in the background", d["markdown"])
-            self.assertEqual(facts["Claude block tokens"], "1,200,000")
-            self.assertEqual(d["actions"][0], {"type": "push", "command": "usage", "title": "Count again"})
-            threading.Timer(1.0, lock.close).start()
-            started = time.monotonic()
-            self.assertTrue(self.hud().endswith("Claude block 1.2M tokens"), "the summary waits for the refresh")
-            self.assertGreater(time.monotonic() - started, 0.9)
+            text = self.page(home=self.box.home)[3]["text"]
+            self.assertTrue(text.startswith("Still counting"), text)
+            self.assertIn("1.2M in this 5-hour block", text)
 
     def test_the_background_refresh_fills_the_cache(self):
         self.claude_fixture()
