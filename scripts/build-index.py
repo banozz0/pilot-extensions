@@ -47,6 +47,7 @@ def entry(folder):
         "icon": manifest.get("icon"),
         "version": manifest["version"],
         "description": manifest["description"],
+        "examples": list(manifest.get("examples") or []),
         "requires": list(manifest.get("requires") or []),
         "commands": [{"name": c["name"], "title": c["title"], "mode": c["mode"]}
                      for c in manifest["commands"] if not c.get("hidden")],

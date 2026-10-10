@@ -5,8 +5,12 @@
       "id": "claude-sessions",
       "title": "Claude Sessions",
       "icon": "🤖",
-      "version": "1.0.1",
-      "description": "Your recent Claude Code sessions by folder and title; copy the command that resumes one, or open its folder.",
+      "version": "1.0.2",
+      "description": "Find a Claude Code session you had and pick it back up, without digging through folders.",
+      "examples": [
+        "Type pilot: your sessions in ~/code/pilot, newest first",
+        "Return copies claude --resume <id>; paste it in a terminal to carry on"
+      ],
       "requires": [
         "python3"
       ],
@@ -28,8 +32,8 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "77468d545ee568cb22f52c184c50cf95c51ac6814e898eddce5396126939fb70",
-          "size": 585,
+          "sha256": "dcf2019e8e6128735e13b779ca301fdbd709dea4be88d25a546690f43a59c99f",
+          "size": 714,
           "executable": false
         },
         {
@@ -44,8 +48,12 @@
       "id": "dev-utils",
       "title": "Dev Utils",
       "icon": "🧰",
-      "version": "1.0.0",
-      "description": "Turn the clipboard into what you need: base64, URL encoding, JSON, JWT, epoch and ISO dates, hashes, case, a new UUID.",
+      "version": "1.0.1",
+      "description": "Turns whatever you copied into the form you need, without a website.",
+      "examples": [
+        "Copy a JWT, run Decode JWT: its header, payload and when it expires",
+        "Copy 1760083200, Transform clipboard: 2025-10-10T08:00:00Z"
+      ],
       "requires": [
         "python3"
       ],
@@ -75,8 +83,8 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "939b9a0b8b1b9cda52704f8c2346bb243d3533d377f171ffcafd196768b5e2d4",
-          "size": 653,
+          "sha256": "fcf3c059071a6c61b87db2da111f9436f9ee90dc52e81bfa038de4ef1dffc722",
+          "size": 752,
           "executable": false
         },
         {
@@ -91,8 +99,12 @@
       "id": "pomodoro",
       "title": "Pomodoro",
       "icon": "🍅",
-      "version": "1.0.0",
-      "description": "Focus blocks and breaks, counted down in the menu bar, with the long break every few blocks.",
+      "version": "1.0.1",
+      "description": "Work in focused blocks with short breaks, the time left counting down in the menu bar.",
+      "examples": [
+        "Focus: 25 minutes start counting down in the menu bar",
+        "At zero Pilot's alert offers Start break; every 4th break is the long one"
+      ],
       "requires": [
         "python3"
       ],
@@ -147,8 +159,8 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "b6a4fb1fbac787fbc5d0ad433be97b46f285ca2693f8ffc2ba1b69a6b6093630",
-          "size": 3991,
+          "sha256": "e8d2cae096d89ba84c9cd4c5be846c43a86e099b4394cc45166f97e280f3eddb",
+          "size": 4135,
           "executable": false
         },
         {
@@ -163,8 +175,12 @@
       "id": "ports",
       "title": "Ports",
       "icon": "🔌",
-      "version": "1.0.0",
-      "description": "See which program holds a listening TCP port and quit it: the dev server you forgot.",
+      "version": "1.0.1",
+      "description": "Frees a port a forgotten program is holding, when a dev server says the address is already in use.",
+      "examples": [
+        "Type 3000: the node process holding it; Return quits it",
+        "Cmd+K on it: Force quit, when it won't let go"
+      ],
       "requires": [
         "python3",
         "lsof"
@@ -185,8 +201,8 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "593ae160a7eabc3963896f542ebda4796d40f1bc9d61cac9fff7a4e8f069e854",
-          "size": 481,
+          "sha256": "a8f945372fbabe7b3234442b48d4f9efdd9b326d2ed839ac59feaa3e08c9a283",
+          "size": 619,
           "executable": false
         },
         {
@@ -201,8 +217,12 @@
       "id": "repos",
       "title": "Repos",
       "icon": "🌿",
-      "version": "1.0.0",
-      "description": "Your git repos with their branch and uncommitted changes; open one in your terminal, lazygit, Finder or GitHub.",
+      "version": "1.0.1",
+      "description": "Jump into any of your git repos and see which ones have work not committed yet.",
+      "examples": [
+        "Type pil: pilot with its branch and 3 changed files; Return opens it in Ghostty",
+        "Cmd+K on a repo: lazygit, Finder or its GitHub page"
+      ],
       "requires": [
         "python3",
         "git"
@@ -225,8 +245,8 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "7c4dac3346e96d1fdea742bd977b18d7b84a8fcc236fa4331269e1e396234da9",
-          "size": 1092,
+          "sha256": "3f87b768eaf93ee62c6065239eaabd4d01bbf0aac09bd894e60173440caf408c",
+          "size": 1214,
           "executable": false
         },
         {

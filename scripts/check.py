@@ -6,7 +6,8 @@ Pilot's rules (Sources/PilotCore/Extension.swift): id and command names `[a-z0-9
 `process`; at least one command; command names unique; mode no-view, list or detail; run an executable regular file
 inside the folder; filter pilot or self; a session is a list that filters itself; preference types text, password,
 checkbox, dropdown (with data), app, file, folder; preference names `[A-Za-z0-9_-]+`, unique; a default that fits.
-The catalogue's own (Pilot's PLAN section 3): folder name is the id; `version` x.y.z; a description; `requires` a list
+The catalogue's own (Pilot's PLAN section 3): folder name is the id; `version` x.y.z; a description, what it is for in
+plain words; `examples`, one or two concrete uses (Pilot's story 158); `requires` a list
 of names; `hidden` a boolean; at least one shown command; at most 200 files, 2 MB a file, 10 MB in all; Python
 programs start `#!/usr/bin/env python3`.
 """
@@ -30,6 +31,7 @@ FILTERS = {"pilot", "self"}
 PREFERENCE_TYPES = {"text", "password", "checkbox", "dropdown", "app", "file", "folder"}
 SHEBANG = "#!/usr/bin/env python3"
 MAX_FILES, MAX_FILE, MAX_TOTAL = 200, 2 * 1024 * 1024, 10 * 1024 * 1024
+MAX_EXAMPLES = 2  # Pilot shows two (Extension.mostExamples)
 
 
 def is_emoji(s):
@@ -162,6 +164,10 @@ def check(folder):
         problems.append("version must be x.y.z")
     if not isinstance(manifest.get("description"), str) or not manifest["description"].strip():
         problems.append("description is missing")
+    examples = manifest.get("examples")
+    if not isinstance(examples, list) or not 1 <= len(examples) <= MAX_EXAMPLES \
+            or not all(isinstance(e, str) and e.strip() for e in examples):
+        problems.append("examples must be a list of 1 to %d concrete uses" % MAX_EXAMPLES)
     requires = manifest.get("requires", [])
     if not isinstance(requires, list) or not all(isinstance(r, str) and r for r in requires):
         problems.append("requires must be a list of names")
