@@ -228,8 +228,8 @@ class ExtensionTestCase(unittest.TestCase):
 
     def assertBlocksShape(self, blocks, types=BLOCK_TYPES):
         """Every block as Pilot decodes it (stories 161 and 165): a known type with its fields; a list's items and the
-        buttons' actions as an item's; a section's blocks one level deep, a meter's resetsAt seconds since 1970; a chat's
-        messages (20 at most), an input's run actions."""
+        buttons' actions as an item's; a section's blocks one level deep, a meter's resetsAt seconds since 1970, its mark 0
+        to 100 and value a string; a chat's messages (20 at most), an input's run actions."""
         self.assertIsInstance(blocks, list)
         for block in blocks:
             self.assertIn(block.get("type"), types, block)
@@ -246,6 +246,9 @@ class ExtensionTestCase(unittest.TestCase):
                 self.assertIn(block.get("tone"), self.TONES)
                 if "resetsAt" in block:
                     self.assertIsInstance(block["resetsAt"], (int, float))
+                if "mark" in block:
+                    self.assertTrue(0 <= block["mark"] <= 100, block)
+                self.assertIsInstance(block.get("value", ""), str)
             elif kind == "section":
                 self.assertIsInstance(block.get("title", ""), str)
                 self.assertIsInstance(block.get("subtitle", ""), str)

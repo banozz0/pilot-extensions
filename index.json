@@ -5,11 +5,11 @@
       "id": "ai-usage",
       "title": "AI usage",
       "icon": "📊",
-      "version": "2.0.0",
-      "description": "See how much of your Claude and Codex limits you have used this session and this week, and when each resets, in the menu bar.",
+      "version": "3.0.0",
+      "description": "See how much of your Claude and Codex limits is left this session and this week, how your pace compares, and when each resets, in the menu bar.",
       "examples": [
-        "Glance at the menu bar: C and X gauges, the session over the week, amber from 60% and red from 85%",
-        "Click the gauges: a card per provider with Claude's session and week, Codex's 5 hours, week and credits, and when each was read"
+        "Glance at the menu bar: ✳ Claude's and ⊛ Codex's session left, amber once a window is 60% used, red from 85%",
+        "Click it: a card per provider and Codex account with its email and plan, each window's share left, its pace mark and line (in reserve or deficit, lasts until reset or runs out when) and its reset, Claude's per-model week and Codex's limit reset credits"
       ],
       "requires": [
         "python3"
@@ -31,6 +31,7 @@
         "clipboard": true,
         "files": [
           "~/.local/state/ghostex/agent-hooks/claude-statusline",
+          "~/.claude.json",
           "~/.codex/sessions",
           "~/.codex/archived_sessions",
           "~/.claude/projects"
@@ -40,14 +41,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "06a41d280d91fe38c9e7c8611640de2d4904c3bf226310ad936d2c7b0e9f5077",
-          "size": 1243,
+          "sha256": "d6f07a5d8c78eb8edb04620d74d41ea009066fe54e5ddb5a0c907c7c0d631e75",
+          "size": 3436,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "3dcedf73c7b16dfd48f26068e0185d77c396da39b43430938704a4817dea5286",
-          "size": 27980,
+          "sha256": "68c7f7b2365437ea5da2fdcc309a949353089bb8bebc352527a2fb9fe7f592e4",
+          "size": 46452,
           "executable": true
         }
       ]

@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
-"""AI usage for Pilot: how much of each AI plan's limits is used, from this Mac's own files, read only.
+"""AI usage for Pilot: how much of each AI plan's limits is left, CodexBar's way, from this Mac and the providers' own CLIs.
 
-Claude: Claude Code hands its status-line command `rate_limits` after every reply (`five_hour` and `seven_day`, each
-`used_percentage` and `resets_at` in epoch seconds), and Ghostex keeps that per session in
-~/.local/state/ghostex/agent-hooks/claude-statusline/<session>.json as `{"version", "updatedAt", "payload": {…}}`. The
-newest file that carries `rate_limits` wins; with none, Claude's share is unknown until the next reply.
+Claude, two sources, the newer winning for the session and the week:
+- Claude Code hands its status-line command `rate_limits` after every reply (`five_hour` and `seven_day`, each
+  `used_percentage` and `resets_at` in epoch seconds), and Ghostex keeps that per session in
+  ~/.local/state/ghostex/agent-hooks/claude-statusline/<session>.json as `{"version", "updatedAt", "payload": {…}}`.
+- Claude Code caches its own usage read in ~/.claude.json: `cachedUsageUtilization` (`fetchedAtMs`, `accountUuid` and
+  `utilization.limits`, each `kind` session, weekly_all or weekly_scoped with a model's `display_name`, `percent`,
+  `resets_at` ISO), the only place a per-model week such as "Fable weekly" shows; `oauthAccount` there gives the email
+  and plan (`organizationType`, `organizationRateLimitTier`). Only those two keys are used; the file holds no token.
 
-Codex: its session logs (~/.codex/sessions/YYYY/MM/DD/*.jsonl, and archived_sessions) carry `token_count` events whose
-`payload.rate_limits` holds `primary` (the 5-hour window) and `secondary` (the week), each with `used_percent`,
-`window_minutes` and `resets_at` (older Codex wrote `resets_in_seconds`, counted from the event), plus `credits`. Only
-the tail of the newest few logs is read.
+Codex, per account (a CODEX_HOME folder): the folders in the `codexHomes` preference are asked through Codex's own
+`codex app-server` (`account/read`: email and plan; `account/rateLimits/read`: the 5-hour and weekly windows, credits and
+limit reset credits). Codex signs in with its own login; Pilot never reads it. The bar never waits for that: it shows
+the last answer (paths.cache/codex-<hash>.json) and hands a stale one to one detached refresh; a popover or page asks
+again inline when the answer is over 30 s old. Without an answer, and for any other ~/.codex-* folder (listed but never
+asked, since asking makes Codex use that folder's login), the numbers come from the tail of the newest session logs
+(sessions/YYYY/MM/DD/*.jsonl, archived_sessions): `token_count` events whose `payload.rate_limits` holds `primary` and
+`secondary`, each `used_percent`, `window_minutes` and `resets_at` (older Codex: `resets_in_seconds`), plus `credits`.
 
-Either way, a window whose reset time has passed since the numbers were read has reset: it shows 0%, with what it was.
+Either way, a window whose reset time has passed since the numbers were read has reset: it shows 100% left, with what
+it was. Each window's pace compares its use with the share of the window gone: in reserve or in deficit, whether it lasts
+until the reset (and the headroom) or when it runs out, and a mark where its share left should be by now.
 
 Gemini keeps no local limit, and its quota is only asked with its sign-in token, which Pilot never reads: "limit
 unknown" once the gemini CLI is on PATH, "Not set up" before.
@@ -21,16 +31,24 @@ Claude Code tokens (a footnote on the page and in the detail, not a limit): ever
 stopped and summed per minute into paths.cache, keyed by path, size and modification time. A run that cannot finish in
 its time hands the rest to one detached refresh (a lock keeps two from overlapping).
 
-Nothing else is read: no credentials, tokens, cookies or auth files of any provider, and nothing goes over the network.
+Settings (the manifest's preferences): show the share left (CodexBar's way, the default) or used; which providers the
+bar shows and whether its figure is the session or the most used window; pace on or off; other Codex folders and Gemini
+shown or hidden.
+
+Nothing else is read: no auth.json, credentials, keychain items or cookies of any provider.
 """
 import calendar
 import fcntl
+import hashlib
 import json
 import os
+import re
+import select
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 START = time.monotonic()
@@ -39,18 +57,36 @@ SCAN_DAYS = 8
 BLOCK = 5 * 3600
 CACHE_FILE = "claude-usage.json"
 LOCK_FILE = "refresh.lock"
+CODEX_LOCK = "codex.lock"
 CACHE_VERSION = 1
 SEEN_KEEP = 512  # message ids remembered per log to fold repeated lines into one; repeats sit close together
 DETAIL_SCAN = 1.0  # seconds from start a detail may spend reading Claude logs; the rest goes to the background
 PAGE_SCAN = 3.0  # a page's command may take 5 s; the bar and popover read no Claude logs at all
 REFRESH_SCAN = 120.0
+LIVE_FRESH = 30  # a popover or page asks Codex again when its answer is older
+LIVE_STALE = 120  # the bar and detail hand an older answer to a background refresh
+LIVE_WAIT = 3.0  # seconds a popover waits for Codex; a page waits 2 s, leaving time to count Claude Code tokens
+PAGE_WAIT = 2.0
 CODEX_TAILS = (256 * 1024, 4 * 1024 * 1024, 32 * 1024 * 1024)
+CODEX_HOME_NAME = re.compile(r"\.codex(-[A-Za-z0-9._-]+)?\Z")
 STATUSLINE = os.path.join(".local", "state", "ghostex", "agent-hooks", "claude-statusline")
 STATUSLINE_TRIES = 40  # newest status-line files read for one with rate_limits
 USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
-WARN, ALERT = 60, 85
+SESSION, WEEK = 300, 10080  # window lengths in minutes
+WARN, ALERT = 60, 85  # percent used
 BAR = 20
 SET_UP_AI = {"type": "open", "url": "pilot://open?page=ai", "title": "Set up in Pilot › AI…"}
+# The settings (the manifest's preferences), read once per run by configure().
+VIEW = {"show": "left", "barProviders": "both", "barWindow": "session", "pace": True, "otherCodex": True, "gemini": True}
+CLAUDE_PLANS = {"claude_max": "Max", "claude_pro": "Pro", "claude_team": "Team", "claude_enterprise": "Enterprise"}
+
+
+def configure(run):
+    """The run's settings over the defaults; a value of the wrong type keeps the default."""
+    prefs = run.get("preferences") or {}
+    for key, default in VIEW.items():
+        if isinstance(prefs.get(key), type(default)):
+            VIEW[key] = prefs[key]
 
 
 def send(message):
@@ -58,7 +94,7 @@ def send(message):
 
 
 def parse_time(stamp):
-    """An ISO timestamp from a log (UTC, `Z`) as epoch seconds, or None."""
+    """An ISO timestamp (UTC `Z`, or with an offset) as epoch seconds, or None."""
     if not isinstance(stamp, str) or len(stamp) < 19:
         return None
     try:
@@ -75,22 +111,45 @@ def number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def window(name, percent, resets_at, now):
+def window(name, percent, resets_at, now, minutes=None):
     """One limit window; reset_since when its reset time has passed since it was read."""
     return {"name": name, "percent": float(percent), "resets_at": resets_at,
+            "minutes": minutes if isinstance(minutes, int) and minutes > 0 else None,
             "reset_since": resets_at is not None and resets_at <= now}
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def write_json(path, data):
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, separators=(",", ":"))
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 # Claude
 
 
-def claude_limits(home, now):
-    """Claude's session and week from the newest Ghostex status-line file that carries rate_limits."""
+def claude_statusline(home, now):
+    """(read time, session and week) from the newest Ghostex status-line file that carries rate_limits, or None."""
     folder = os.path.join(home, STATUSLINE)
     try:
         names = [n for n in os.listdir(folder) if n.endswith(".json")]
     except OSError:
-        return {"state": "unknown"}
+        return None
     found = []
     for name in names:
         try:
@@ -99,34 +158,108 @@ def claude_limits(home, now):
             continue
     found.sort(reverse=True)
     for mtime, name in found[:STATUSLINE_TRIES]:
-        try:
-            with open(os.path.join(folder, name), encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            continue
+        data = read_json(os.path.join(folder, name))
         payload = data.get("payload") if isinstance(data, dict) else None
         limits = payload.get("rate_limits") if isinstance(payload, dict) else None
         if not isinstance(limits, dict):
             continue
         windows = []
-        for key, label in (("five_hour", "Session"), ("seven_day", "Week")):
+        for key, label, minutes in (("five_hour", "Session", SESSION), ("seven_day", "Weekly", WEEK)):
             raw = limits.get(key)
             percent = number(raw.get("used_percentage")) if isinstance(raw, dict) else None
             if percent is not None:
-                windows.append(window(label, percent, number(raw.get("resets_at")), now))
+                windows.append(window(label, percent, number(raw.get("resets_at")), now, minutes))
         if windows:
-            return {"state": "ok", "read_at": parse_time(data.get("updatedAt")) or mtime, "windows": windows}
-    return {"state": "unknown"}
+            return parse_time(data.get("updatedAt")) or mtime, windows
+    return None
+
+
+def claude_plan(account):
+    plan = CLAUDE_PLANS.get(account.get("organizationType"))
+    tier = re.search(r"_(\d+)x\Z", account.get("organizationRateLimitTier") or "")
+    return "%s %sx" % (plan, tier.group(1)) if plan and tier else plan
+
+
+def claude_account(home, now):
+    """(email, plan, cached read) from ~/.claude.json: the account Claude Code signed in with and its own last usage read
+    as (read time, windows), the per-model weeks among them; None for what is missing or another account's."""
+    data = read_json(os.path.join(home, ".claude.json"))
+    if not isinstance(data, dict):
+        return None, None, None
+    account = data.get("oauthAccount") if isinstance(data.get("oauthAccount"), dict) else {}
+    email = account.get("emailAddress") if isinstance(account.get("emailAddress"), str) else None
+    cached = data.get("cachedUsageUtilization")
+    fetched = number(cached.get("fetchedAtMs")) if isinstance(cached, dict) else None
+    if fetched is None or cached.get("accountUuid") != account.get("accountUuid"):
+        return email, claude_plan(account), None
+    usage = cached.get("utilization") if isinstance(cached.get("utilization"), dict) else {}
+    windows = []
+    for raw in usage.get("limits") or []:
+        if not isinstance(raw, dict) or number(raw.get("percent")) is None:
+            continue
+        kind, scope = raw.get("kind"), raw.get("scope")
+        model = scope.get("model") if isinstance(scope, dict) else None
+        if kind == "session":
+            name, minutes = "Session", SESSION
+        elif kind == "weekly_all":
+            name, minutes = "Weekly", WEEK
+        elif kind == "weekly_scoped" and isinstance(model, dict) and isinstance(model.get("display_name"), str):
+            name, minutes = "%s weekly" % model["display_name"], WEEK
+        else:
+            continue
+        windows.append(window(name, raw["percent"], parse_time(raw.get("resets_at")), now, minutes))
+    return email, claude_plan(account), (fetched / 1000.0, windows) if windows else None
+
+
+def claude_limits(home, now):
+    """Claude's windows: the session and the week from whichever read is newer, the status line's or Claude Code's
+    cached one, then the cached per-model weeks."""
+    email, plan, cached = claude_account(home, now)
+    line = claude_statusline(home, now)
+    if line is None and cached is None:
+        return {"state": "unknown", "who": email, "plan": plan}
+    if cached is None or (line is not None and line[0] >= cached[0]):
+        read_at, windows = line
+        windows = windows + [w for w in (cached[1] if cached else []) if w["name"] not in ("Session", "Weekly")]
+    else:
+        read_at, windows = cached
+    return {"state": "ok", "who": email, "plan": plan, "read_at": read_at, "windows": windows}
 
 
 # Codex
 
 
-def codex_files(home, now):
+def tilde(path, home):
+    return "~" + path[len(home):] if path == home or path.startswith(home + os.sep) else path
+
+
+def codex_homes(home, run):
+    """(folder, asked) per Codex account: the preference's folders, asked live, then any other ~/.codex-* holding a
+    login or logs, read from its logs only."""
+    raw = (run.get("preferences") or {}).get("codexHomes")
+    asked = []
+    for part in (raw if isinstance(raw, str) and raw.strip() else "~/.codex").split(","):
+        path = os.path.normpath(os.path.expanduser(part.strip())) if part.strip() else ""
+        if os.path.isabs(path) and path not in asked:
+            asked.append(path)
+    try:
+        names = sorted(os.listdir(home))
+    except OSError:
+        names = []
+    others = []
+    for name in names:
+        path = os.path.join(home, name)
+        if CODEX_HOME_NAME.match(name) and path not in asked and (
+                os.path.exists(os.path.join(path, "auth.json")) or os.path.isdir(os.path.join(path, "sessions"))):
+            others.append(path)
+    return [(p, True) for p in asked] + [(p, False) for p in others]
+
+
+def codex_files(codex_home, now):
     """Codex logs changed in the last 8 days, newest first."""
     found = []
     for sub in ("sessions", "archived_sessions"):
-        for folder, _, names in os.walk(os.path.join(home, ".codex", sub)):
+        for folder, _, names in os.walk(os.path.join(codex_home, sub)):
             for name in names:
                 if not name.endswith(".jsonl"):
                     continue
@@ -172,8 +305,10 @@ def last_rate_limits(path):
 def window_name(minutes, fallback):
     if not isinstance(minutes, int) or minutes <= 0:
         return fallback
-    if minutes == 10080:
-        return "Week"
+    if minutes == SESSION:
+        return "Session"
+    if minutes == WEEK:
+        return "Weekly"
     if minutes % 1440 == 0:
         return "%d days" % (minutes // 1440)
     if minutes % 60 == 0:
@@ -182,19 +317,47 @@ def window_name(minutes, fallback):
 
 
 def credits_text(raw):
+    """Codex credits worth showing: unlimited, or a balance above 0; None for none."""
     if not isinstance(raw, dict):
         return None
     if raw.get("unlimited") is True:
         return "unlimited"
     balance = raw.get("balance")
-    return balance if isinstance(balance, str) else None if number(balance) is None else str(balance)
+    try:
+        return str(balance) if not isinstance(balance, bool) and float(balance) > 0 else None
+    except (TypeError, ValueError):
+        return None
 
 
-def codex_limits(home, now):
-    if not any(os.path.isdir(os.path.join(home, ".codex", sub)) for sub in ("sessions", "archived_sessions")):
+def plan_words(plan):
+    return {"prolite": "Pro Lite", "promax": "Pro Max", "edu_plus": "Edu Plus", "edu_pro": "Edu Pro"}.get(
+        plan, plan.replace("_", " ").title()) if isinstance(plan, str) and plan and plan != "unknown" else None
+
+
+def codex_windows(raw, keys, now, stamp=None):
+    """The 5-hour and weekly windows of a Codex rate-limit snapshot, its keys (used, minutes, resets) as a log or the
+    app-server spells them; an older log's `resets_in_seconds` counts from the event's `stamp`."""
+    used, length, resets_key = keys
+    out = []
+    for key, fallback in (("primary", "Session"), ("secondary", "Weekly")):
+        w = raw.get(key)
+        percent = number(w.get(used)) if isinstance(w, dict) else None
+        if percent is None:
+            continue
+        resets = number(w.get(resets_key))
+        seconds = number(w.get("resets_in_seconds"))
+        if resets is None and seconds is not None and stamp:
+            resets = stamp + seconds
+        out.append(window(window_name(w.get(length), fallback), percent, resets, now, w.get(length)))
+    return out
+
+
+def codex_logs(codex_home, now):
+    """One account's windows from the last rate_limits in its session logs."""
+    if not any(os.path.isdir(os.path.join(codex_home, sub)) for sub in ("sessions", "archived_sessions")):
         return {"state": "missing"}
     best = None
-    for path in codex_files(home, now)[:3]:
+    for path in codex_files(codex_home, now)[:3]:
         try:
             found = last_rate_limits(path)
         except OSError:
@@ -204,22 +367,152 @@ def codex_limits(home, now):
     if best is None:
         return {"state": "none"}
     stamp, raw = best
-    windows = []
-    for key, fallback in (("primary", "5 hours"), ("secondary", "Week")):
-        w = raw.get(key)
-        percent = number(w.get("used_percent")) if isinstance(w, dict) else None
-        if percent is None:
-            continue
-        resets = number(w.get("resets_at"))
-        if resets is None:
-            seconds = number(w.get("resets_in_seconds"))
-            resets = stamp + seconds if seconds is not None and stamp else None
-        windows.append(window(window_name(w.get("window_minutes"), fallback), percent, resets, now))
+    windows = codex_windows(raw, ("used_percent", "window_minutes", "resets_at"), now, stamp)
     if not windows:
         return {"state": "none"}
-    plan = raw.get("plan_type")
-    return {"state": "ok", "read_at": stamp, "windows": windows, "credits": credits_text(raw.get("credits")),
-            "plan": plan if isinstance(plan, str) and plan else None}
+    return {"state": "ok", "source": "logs", "read_at": stamp, "windows": windows,
+            "credits": credits_text(raw.get("credits")), "plan": plan_words(raw.get("plan_type"))}
+
+
+def ask_codex(codex_home, deadline):
+    """Codex's own answer for one account through `codex app-server` (JSON-RPC lines on stdio), which signs in with its
+    own login: {at, account: {email, plan} or None when signed out, limits, reset_credits}; None when codex is missing,
+    fails or is still quiet at `deadline`."""
+    program = shutil.which("codex")
+    if not program:
+        return None
+    env = dict(os.environ, CODEX_HOME=codex_home)
+    try:
+        proc = subprocess.Popen([program, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, env=env, start_new_session=True)
+    except OSError:
+        return None
+    answers, buffer = {}, b""
+    try:
+        requests = [{"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "pilot-ai-usage", "version": "3"}}},
+                    {"method": "initialized"}, {"id": 2, "method": "account/read", "params": {}},
+                    {"id": 3, "method": "account/rateLimits/read", "params": None}]
+        proc.stdin.write("".join(json.dumps(r) + "\n" for r in requests).encode())
+        proc.stdin.flush()
+        out = proc.stdout.fileno()
+        while len(answers) < 2:
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([out], [], [], left)[0]:
+                return None
+            chunk = os.read(out, 65536)
+            if not chunk:
+                break
+            buffer += chunk
+            *lines, buffer = buffer.split(b"\n")
+            for line in lines:
+                try:
+                    message = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(message, dict) and message.get("id") in (2, 3):
+                    answers[message["id"]] = message
+    except OSError:
+        return None
+    finally:
+        proc.kill()
+        proc.wait()
+    account = (answers.get(2) or {}).get("result")
+    limits = (answers.get(3) or {}).get("result")
+    if not isinstance(account, dict):
+        return None
+    who, at = account.get("account"), time.time()
+    if not isinstance(who, dict):
+        return {"at": at, "account": None}
+    found = {"at": at, "account": {"email": who.get("email") if isinstance(who.get("email"), str) else None,
+                                            "plan": plan_words(who.get("planType"))}}
+    if isinstance(limits, dict) and isinstance(limits.get("rateLimits"), dict):
+        found["limits"] = limits["rateLimits"]
+        summary = limits.get("rateLimitResetCredits")
+        if isinstance(summary, dict) and number(summary.get("availableCount")) is not None:
+            found["reset_credits"] = {"count": int(summary["availableCount"]), "expires": sorted(
+                c["expiresAt"] for c in summary.get("credits") or []
+                if isinstance(c, dict) and c.get("status") == "available" and number(c.get("expiresAt")))}
+    return found
+
+
+def live_path(cache_dir, codex_home):
+    return os.path.join(cache_dir, "codex-%s.json" % hashlib.sha1(codex_home.encode()).hexdigest()[:12])
+
+
+def load_live(cache_dir, codex_home):
+    data = read_json(live_path(cache_dir, codex_home)) if cache_dir else None
+    return data if isinstance(data, dict) and number(data.get("at")) is not None else None
+
+
+def ask_all(cache_dir, homes, deadline):
+    """Asks each account at once, saves each answer; {home: answer} for those that answered."""
+    found = {}
+
+    def one(path):
+        answer = ask_codex(path, deadline)
+        if answer:
+            found[path] = answer
+        if cache_dir:  # a failure is saved too, so the next ask waits as long as after an answer
+            write_json(live_path(cache_dir, path), answer or {"at": time.time(), "failed": True})
+
+    threads = [threading.Thread(target=one, args=(p,), daemon=True) for p in homes]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(max(0.0, deadline - time.monotonic()) + 0.2)
+    return dict(found)
+
+
+def spawn(*args):
+    """One detached run of this program with `args`; it quits at once when another holds its lock."""
+    try:
+        subprocess.Popen([sys.executable, os.path.abspath(__file__)] + list(args),
+                         cwd=os.path.dirname(os.path.abspath(__file__)), stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        pass
+
+
+def from_live(answer, now):
+    """A provider from Codex's own answer."""
+    account = answer.get("account")
+    if account is None:
+        return {"state": "signed_out", "source": "live", "read_at": answer["at"]}
+    raw = answer.get("limits") if isinstance(answer.get("limits"), dict) else {}
+    windows = codex_windows(raw, ("usedPercent", "windowDurationMins", "resetsAt"), now)
+    return {"state": "ok" if windows else "none", "source": "live", "read_at": answer["at"], "windows": windows,
+            "who": account.get("email"), "plan": account.get("plan") or plan_words(raw.get("planType")),
+            "credits": credits_text(raw.get("credits")), "reset_credits": answer.get("reset_credits")}
+
+
+def codex_accounts(home, now, run, ask_until=None):
+    """Every Codex account, asked ones first. `ask_until` (a monotonic deadline) asks Codex again for an answer over
+    30 s old; without it an answer over 120 s old goes to one background refresh."""
+    cache_dir = (run.get("paths") or {}).get("cache")
+    homes = codex_homes(home, run)
+    asked = [p for p, live in homes if live]
+    answers = {p: load_live(cache_dir, p) for p in asked}
+    stale = [p for p in asked if not answers[p] or now - answers[p]["at"] > (LIVE_FRESH if ask_until else LIVE_STALE)]
+    if stale and ask_until:
+        answers.update(ask_all(cache_dir, stale, ask_until))
+    elif stale and cache_dir and shutil.which("codex"):
+        spawn("--codex", cache_dir, *stale)
+    out = []
+    for path, live in homes:
+        if not live and not VIEW["otherCodex"]:
+            continue
+        logs = codex_logs(path, now)
+        answer = answers.get(path) if live else None
+        answer = None if answer and answer.get("failed") else answer
+        provider = logs
+        if answer and (logs["state"] != "ok" or answer["at"] >= (logs["read_at"] or 0)):
+            provider = from_live(answer, now)
+        provider.update(home=tilde(path, home), asked=live)
+        provider["name"] = provider.get("who") or provider["home"]
+        provider["since"] = "update" if provider.get("source") == "live" else "run"
+        if live or provider["state"] == "ok" or os.path.exists(os.path.join(path, "auth.json")):
+            out.append(provider)
+    return out
 
 
 # Gemini
@@ -229,11 +522,12 @@ def gemini_state():
     return "installed" if shutil.which("gemini") else "missing"
 
 
-def limits(home=None, now=None):
-    """Every provider's limits as a dict; reads only the status-line store, Codex's logs and PATH."""
-    home = home or os.path.expanduser("~")
+def limits(run, now=None, ask_until=None):
+    """Every provider's limits as a dict."""
+    home = os.path.expanduser("~")
     now = time.time() if now is None else now
-    return {"now": now, "claude": claude_limits(home, now), "codex": codex_limits(home, now), "gemini": gemini_state()}
+    return {"now": now, "claude": claude_limits(home, now), "codex": codex_accounts(home, now, run, ask_until),
+            "gemini": gemini_state()}
 
 
 # Claude Code tokens (footnote)
@@ -262,13 +556,7 @@ def claude_files(home, now):
 
 
 def load_cache(cache_dir):
-    if not cache_dir:
-        return {}
-    try:
-        with open(os.path.join(cache_dir, CACHE_FILE), encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return {}
+    data = read_json(os.path.join(cache_dir, CACHE_FILE)) if cache_dir else None
     files = data.get("files") if isinstance(data, dict) and data.get("version") == CACHE_VERSION else None
     return files if isinstance(files, dict) else {}
 
@@ -281,18 +569,7 @@ def save_cache(cache_dir, files, now):
         entry["minutes"] = {k: v for k, v in entry["minutes"].items() if int(k) >= oldest}
         if len(entry["seen"]) > SEEN_KEEP:
             entry["seen"] = dict(list(entry["seen"].items())[-SEEN_KEEP:])
-    path = os.path.join(cache_dir, CACHE_FILE)
-    tmp = "%s.%d.tmp" % (path, os.getpid())
-    try:
-        os.makedirs(cache_dir, exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"version": CACHE_VERSION, "files": files}, f, separators=(",", ":"))
-        os.replace(tmp, path)
-    except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    write_json(os.path.join(cache_dir, CACHE_FILE), {"version": CACHE_VERSION, "files": files})
 
 
 def add_line(entry, raw):
@@ -381,26 +658,16 @@ def refresh_claude(home, cache_dir, now, deadline):
     return kept, done == len(files)
 
 
-def take_lock(cache_dir):
-    """The refresh lock, held until its file is closed; None while another refresh holds it."""
+def take_lock(cache_dir, name=LOCK_FILE):
+    """A refresh lock, held until its file is closed; None while another refresh holds it."""
     os.makedirs(cache_dir, exist_ok=True)
-    handle = open(os.path.join(cache_dir, LOCK_FILE), "a")
+    handle = open(os.path.join(cache_dir, name), "a")
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return handle
     except OSError:
         handle.close()
         return None
-
-
-def spawn_refresh(cache_dir):
-    """One detached refresh that finishes reading the logs; it quits at once when another holds the lock."""
-    try:
-        subprocess.Popen([sys.executable, os.path.abspath(__file__), "--refresh", cache_dir],
-                         cwd=os.path.dirname(os.path.abspath(__file__)), stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    except OSError:
-        pass
 
 
 def token_blocks(minutes):
@@ -433,7 +700,7 @@ def claude_tokens(run, now, deadline):
             if lock:
                 lock.close()
         if not complete and cache_dir:
-            spawn_refresh(cache_dir)
+            spawn("--refresh", cache_dir)
     minutes = {}
     since = now - SCAN_DAYS * DAY
     for entry in entries.values():
@@ -499,86 +766,179 @@ def until(moment, now):
 
 
 def tone(percent):
+    """A share used in its tone: amber from 60%, red from 85%."""
     return "alert" if percent >= ALERT else "warn" if percent >= WARN else None
 
 
 def shown(w):
-    """What a window shows now: 0 once it reset since it was read."""
+    """The share used a window shows now: 0 once it reset since it was read."""
     return 0.0 if w["reset_since"] else w["percent"]
 
 
+def left(w):
+    return 100.0 - shown(w)
+
+
+def figure(w):
+    """The share a window shows, as set: left (CodexBar's way) or used."""
+    return shown(w) if VIEW["show"] == "used" else left(w)
+
+
+def figure_text(w):
+    return "%d%% %s" % (round(figure(w)), "used" if VIEW["show"] == "used" else "left")
+
+
 def reset_note(w, since):
-    return "reset since your last %s (was %d%%)" % (since, round(w["percent"]))
+    return "reset since your last %s (was %d%% used)" % (since, round(w["percent"]))
 
 
-def windows_text(name, provider):
-    return "%s %s" % (name, " · ".join("%s %d%%" % (w["name"].lower(), round(shown(w))) for w in provider["windows"]))
+def pace(w, now):
+    """(mark, words) for a window, CodexBar's pace: the mark where its share left should be by now if used evenly, and
+    how far ahead or behind that it is, whether it lasts until the reset at this rate (and the headroom) or when it runs
+    out. (None, None) without a reset time and length, or once it reset."""
+    if w["reset_since"] or not w["resets_at"] or not w["minutes"] or not VIEW["pace"]:
+        return None, None
+    length = w["minutes"] * 60.0
+    remaining = w["resets_at"] - now
+    elapsed = length - remaining
+    if remaining <= 0 or elapsed <= 0:
+        return None, None
+    expected = 100.0 * elapsed / length
+    used = w["percent"]
+    mark = round(expected if VIEW["show"] == "used" else 100.0 - expected, 1)
+    if used <= 0:
+        return mark, None
+    if used >= 100:
+        return mark, "Used up until the reset"
+    gap = expected - used
+    words = ["%d%% in reserve" % round(gap) if gap >= 0 else "%d%% in deficit" % round(-gap)]
+    rate = used / elapsed
+    if used + rate * remaining <= 100:
+        headroom = (100 - used) / (rate * remaining)
+        words += ["Lasts until reset", ("%.1fx headroom" % headroom) if headroom < 10 else "10x+ headroom"]
+    else:
+        words.append("Runs out in %s" % span((100 - used) / rate))
+    return mark, " · ".join(words)
+
+
+def figures_text(provider):
+    return ", ".join("%s %s" % (w["name"], figure_text(w)) for w in provider["windows"])
 
 
 CLAUDE_UNKNOWN = "Unknown until your next Claude Code reply."
-CODEX_WORDS = {"missing": ("no logs", "No Codex logs on this Mac. Run Codex once."),
-               "none": ("no run in 8 days", "No Codex run in 8 days, so both windows have reset.")}
+CODEX_WORDS = {"missing": ("no logs", "Codex didn't answer and has no logs here. Run Codex once."),
+               "none": ("no run in 8 days", "No Codex run in 8 days, so both windows have reset."),
+               "signed_out": ("signed out", "Codex is signed out here. Run `codex login` in a terminal.")}
+NOT_ASKED = ("unavailable", "Not asked: Pilot asks Codex only for the folders in this extension's Codex accounts "
+                            "setting, and this one has no run in 8 days.")
 GEMINI_WORDS = {"missing": ("not set up", "The gemini CLI isn't installed on this Mac."),
                 "installed": ("limit unknown", "Gemini keeps no limit on this Mac, and asking Google needs your sign-in "
                                                "token, which Pilot never reads.")}
+FOOTNOTE = "Codex's numbers come from Codex itself. Pilot reads no sign-in tokens."
+
+
+def codex_words(codex):
+    return CODEX_WORDS[codex["state"]] if codex["asked"] else NOT_ASKED
+
+
+def codex_read(codex, now):
+    """When an account's numbers were read: updated 16:23 (Codex's answer), last run Tue 22:35 (its logs)."""
+    if not codex["read_at"]:
+        return "last run unknown"
+    return ("updated " if codex["source"] == "live" else "last run ") + stamp(codex["read_at"], now)
 
 
 def summary_line(data):
-    claude, codex = data["claude"], data["codex"]
-    parts = [windows_text("Claude", claude) if claude["state"] == "ok" else "Claude unknown"]
-    if codex["state"] == "ok":
-        parts.append(windows_text("Codex", codex))
-    elif codex["state"] == "none":
-        parts.append("Codex no run in 8 days")
+    claude = data["claude"]
+    parts = ["Claude: " + figures_text(claude) if claude["state"] == "ok" else "Claude unknown"]
+    known = [c for c in data["codex"] if c["state"] == "ok"]
+    for codex in known:
+        parts.append("Codex%s: %s" % (" " + codex["name"] if len(known) > 1 else "", figures_text(codex)))
     return " · ".join(parts)
 
 
-# Blocks: a section card per provider (Surfaces v2)
+# Blocks: a section card per provider and account (Surfaces v2)
 
 
-def meter(w, since):
+def window_note(w, since, now):
+    """What a window's line says under its bar: that it reset, its pace, or that its reset time is unknown; None."""
     if w["reset_since"]:
-        return {"type": "meter", "label": w["name"], "percent": 0, "note": reset_note(w, since)}
-    m = {"type": "meter", "label": w["name"], "percent": round(w["percent"], 1), "tone": tone(w["percent"]) or "fine"}
-    if w["resets_at"]:
-        m["resetsAt"] = int(w["resets_at"])
-    else:
-        m["note"] = "reset time unknown"
+        return reset_note(w, since)
+    return pace(w, now)[1] or (None if w["resets_at"] else "reset time unknown")
+
+
+def meter(w, since, now):
+    """A window as CodexBar draws it: the share left (or used, as set), filled; the pace mark and words; the reset
+    countdown."""
+    m = {"type": "meter", "label": w["name"], "percent": round(figure(w), 1), "value": figure_text(w)}
+    note = window_note(w, since, now)
+    if not w["reset_since"]:
+        m["tone"] = tone(w["percent"]) or "fine"
+        mark = pace(w, now)[0]
+        if mark is not None:
+            m["mark"] = mark
+        if w["resets_at"]:
+            m["resetsAt"] = int(w["resets_at"])
+    if note:
+        m["note"] = note
     return m
+
+
+def subtitle(*parts):
+    return " · ".join(p for p in parts if p)
 
 
 def claude_card(claude, now):
     if claude["state"] != "ok":
-        return {"type": "section", "title": "Claude", "subtitle": "unknown",
+        return {"type": "section", "title": "Claude", "subtitle": subtitle(claude.get("who"), claude.get("plan"), "unknown"),
                 "blocks": [{"type": "markdown", "text": CLAUDE_UNKNOWN}]}
-    return {"type": "section", "title": "Claude", "subtitle": "Claude Code · read %s" % stamp(claude["read_at"], now),
-            "blocks": [meter(w, "Claude Code reply") for w in claude["windows"]]}
+    return {"type": "section", "title": "Claude",
+            "subtitle": subtitle(claude.get("who"), claude.get("plan"), "read " + stamp(claude["read_at"], now)),
+            "blocks": [meter(w, "Claude Code reply", now) for w in claude["windows"]]}
+
+
+def reset_credits_text(found, now):
+    if not found or found["count"] <= 0:
+        return None
+    text = "**Limit reset credits:** %d available" % found["count"]
+    if found["expires"]:
+        text += " · expire " + ", ".join(stamp_ahead(t, now) for t in found["expires"])
+    return text
+
+
+def stamp_ahead(moment, now):
+    """A day ahead, short: 29 Oct 19:35 (with the year when it is not this one)."""
+    day = time.localtime(moment)
+    return time.strftime("%-d %b %H:%M" if day.tm_year == time.localtime(now).tm_year else "%-d %b %Y %H:%M", day)
 
 
 def codex_card(codex, now):
-    if codex["state"] in CODEX_WORDS:
-        subtitle, text = CODEX_WORDS[codex["state"]]
-        return {"type": "section", "title": "Codex", "subtitle": subtitle, "blocks": [{"type": "markdown", "text": text}]}
-    subtitle = "last run %s" % stamp(codex["read_at"], now) if codex["read_at"] else "last run unknown"
-    if codex["plan"]:
-        subtitle = "%s · %s" % (codex["plan"], subtitle)
-    blocks = [meter(w, "run") for w in codex["windows"]]
+    if codex["state"] != "ok":
+        words, text = codex_words(codex)
+        return {"type": "section", "title": "Codex", "subtitle": subtitle(codex["name"], words),
+                "blocks": [{"type": "markdown", "text": text}]}
+    blocks = [meter(w, codex["since"], now) for w in codex["windows"]]
+    credits = reset_credits_text(codex.get("reset_credits"), now)
+    if credits:
+        blocks.append({"type": "markdown", "text": credits})
     if codex["credits"] is not None:
         blocks.append({"type": "stats", "items": [{"label": "Credits", "value": codex["credits"]}]})
-    return {"type": "section", "title": "Codex", "subtitle": subtitle, "blocks": blocks}
+    return {"type": "section", "title": "Codex", "subtitle": subtitle(codex["name"], codex.get("plan"), codex_read(codex, now)),
+            "blocks": blocks}
 
 
 def gemini_card(state):
-    subtitle, text = GEMINI_WORDS[state]
+    words, text = GEMINI_WORDS[state]
     blocks = [{"type": "markdown", "text": text}]
     if state == "missing":
         blocks.append({"type": "buttons", "actions": [SET_UP_AI]})
-    return {"type": "section", "title": "Gemini", "subtitle": subtitle, "blocks": blocks}
+    return {"type": "section", "title": "Gemini", "subtitle": words, "blocks": blocks}
 
 
 def cards(data):
     now = data["now"]
-    return [claude_card(data["claude"], now), codex_card(data["codex"], now), gemini_card(data["gemini"])]
+    out = [claude_card(data["claude"], now)] + [codex_card(c, now) for c in data["codex"]]
+    return out + [gemini_card(data["gemini"])] if VIEW["gemini"] else out
 
 
 def token_note(tokens):
@@ -592,42 +952,39 @@ def token_note(tokens):
     return words
 
 
-def gauges(data):
-    """C and X, the session over the week, each in its loudest tone; a provider with no numbers has no gauge."""
-    out = []
-    for label, provider in (("C", data["claude"]), ("X", data["codex"])):
-        if provider["state"] == "ok":
-            values = [round(shown(w), 1) for w in provider["windows"]]
-        elif label == "X" and provider["state"] == "none":
-            values = [0, 0]
-        else:
-            continue
-        g = {"label": label, "meters": values}
-        level = tone(max(values))
-        if level:
-            g["tone"] = level
-        out.append(g)
-    return out
+def bar_line(data):
+    """The menu bar's words, CodexBar's: each provider set to show, its mark and its session left (✳ Claude, ⊛ Codex's
+    first account with numbers), or the most used window, or used, as set; in the tone of the most used window among
+    them; AI when none is known."""
+    parts, used = [], []
+    codex = next((c for c in data["codex"] if c["state"] == "ok"), None)
+    for mark, name, provider in (("✳", "claude", data["claude"]), ("⊛", "codex", codex)):
+        if provider and provider["state"] == "ok" and VIEW["barProviders"] in ("both", name):
+            windows = provider["windows"]
+            w = max(windows, key=shown) if VIEW["barWindow"] == "tightest" else windows[0]
+            parts.append("%s%d%%" % (mark, round(figure(w))))
+            used += [shown(w) for w in windows]
+    return (" ".join(parts) or "AI"), tone(max(used, default=0))
 
 
 # Commands
 
 
 def show_bar(run):
-    data = limits()
     if run.get("surface") == "popover":
-        send({"type": "blocks", "blocks": cards(data) + [{"type": "markdown", "text": "Pilot reads no sign-in tokens."}]})
+        data = limits(run, ask_until=START + LIVE_WAIT)
+        send({"type": "blocks", "blocks": cards(data) + [{"type": "markdown", "text": FOOTNOTE}]})
         return
-    found = gauges(data)
-    top = max((m for g in found for m in g["meters"]), default=0)
-    send({"type": "bar", "text": "" if found else "AI", "tone": tone(top), "gauges": found, "blocks": cards(data)})
+    data = limits(run)
+    text, level = bar_line(data)
+    send({"type": "bar", "text": text, "tone": level, "blocks": cards(data)})
 
 
 def show_page(run):
-    data = limits()
+    data = limits(run, ask_until=START + PAGE_WAIT)
     tokens = claude_tokens(run, data["now"], START + PAGE_SCAN)
     send({"type": "blocks", "blocks": cards(data) + [
-        {"type": "markdown", "text": token_note(tokens)},
+        {"type": "markdown", "text": token_note(tokens) + " " + FOOTNOTE},
         {"type": "buttons", "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]}]})
 
 
@@ -638,44 +995,47 @@ def bar(fraction):
 
 def windows_markdown(provider, since, now, md, rows, title):
     for w in provider["windows"]:
-        if w["reset_since"]:
-            note = reset_note(w, since)
-        else:
-            note = "resets " + until(w["resets_at"], now) if w["resets_at"] else "reset time unknown"
-        text = "%d%% · %s" % (round(shown(w)), note)
-        md.append("- **%s** %s %s" % (w["name"], bar(shown(w) / 100.0), text))
+        reset = "resets " + until(w["resets_at"], now) if w["resets_at"] and not w["reset_since"] else None
+        text = " · ".join(p for p in (figure_text(w), reset, window_note(w, since, now)) if p)
+        md.append("- **%s** %s %s" % (w["name"], bar(figure(w) / 100.0), text))
         rows.append({"label": "%s %s" % (title, w["name"].lower()), "text": text})
 
 
 def show_usage(run):
-    data = limits()
-    now, claude, codex = data["now"], data["claude"], data["codex"]
+    data = limits(run)
+    now, claude = data["now"], data["claude"]
     tokens = claude_tokens(run, now, START + DETAIL_SCAN)
     md, rows = ["## Claude"], []
     if claude["state"] == "ok":
         windows_markdown(claude, "Claude Code reply", now, md, rows, "Claude")
-        md += ["", "From Claude Code's status line, read %s." % stamp(claude["read_at"], now)]
+        md += ["", "%s, read %s." % (subtitle(claude.get("who"), claude.get("plan")) or "Claude Code",
+                                     stamp(claude["read_at"], now))]
     else:
         md.append(CLAUDE_UNKNOWN)
         rows.append({"label": "Claude", "text": "unknown"})
-    md += ["", "## Codex"]
-    if codex["state"] == "ok":
-        windows_markdown(codex, "run", now, md, rows, "Codex")
-        if codex["credits"] is not None:
-            md.append("- **Credits** %s" % codex["credits"])
-            rows.append({"label": "Codex credits", "text": codex["credits"]})
-        if codex["read_at"]:
-            md += ["", "From your last Codex run, %s." % stamp(codex["read_at"], now)]
-    else:
-        md.append(CODEX_WORDS[codex["state"]][1])
-    subtitle, text = GEMINI_WORDS[data["gemini"]]
-    md += ["", "## Gemini", "**%s.** %s" % (subtitle.capitalize(), text), "", "---", "", token_note(tokens)]
+    for codex in data["codex"]:
+        md += ["", "## Codex · %s" % codex["name"]]
+        if codex["state"] == "ok":
+            windows_markdown(codex, codex["since"], now, md, rows, "Codex")
+            credits = reset_credits_text(codex.get("reset_credits"), now)
+            if credits:
+                md.append("- " + credits)
+            if codex["credits"] is not None:
+                md.append("- **Credits** %s" % codex["credits"])
+                rows.append({"label": "Codex credits", "text": codex["credits"]})
+            md += ["", "%s, %s." % (codex.get("plan") or "Codex", codex_read(codex, now))]
+        else:
+            md.append(codex_words(codex)[1])
+    if VIEW["gemini"]:
+        words, text = GEMINI_WORDS[data["gemini"]]
+        md += ["", "## Gemini", "**%s.** %s" % (words.capitalize(), text)]
+    md += ["", "---", "", token_note(tokens), "", FOOTNOTE]
     send({"type": "detail", "markdown": "\n".join(md) + "\n", "metadata": rows,
           "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]})
 
 
 def show_summary(run):
-    send({"type": "hud", "text": summary_line(limits())})
+    send({"type": "hud", "text": summary_line(limits(run, ask_until=START + LIVE_WAIT))})
 
 
 def background_refresh(cache_dir):
@@ -689,15 +1049,31 @@ def background_refresh(cache_dir):
         lock.close()
 
 
+def background_codex(cache_dir, homes):
+    """Asks Codex for each account the bar found stale; one at a time across runs."""
+    signal.alarm(30)
+    lock = take_lock(cache_dir, CODEX_LOCK)
+    if lock is None:
+        return
+    try:
+        ask_all(cache_dir, homes, time.monotonic() + 20)
+    finally:
+        lock.close()
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--refresh":
         background_refresh(sys.argv[2])
+        return
+    if len(sys.argv) >= 4 and sys.argv[1] == "--codex":
+        background_codex(sys.argv[2], sys.argv[3:])
         return
     try:
         run = json.loads(sys.stdin.readline())
     except ValueError:
         send({"type": "error", "text": "got a run message it could not read"})
         return
+    configure(run)
     command = run.get("command")
     if command == "usage":
         show_usage(run)

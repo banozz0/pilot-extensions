@@ -20,7 +20,8 @@ a fixed environment, list and detail answers within 2 s, no-view within 30 s. Ma
 `~/code/pilot/Sources/PilotCore/Extension.swift`. Added 2026-10-10: `"hidden": true` commands, several actions per
 no-view run, `hud` and `alert` with `sound`, the `timer` action. Story 161: `surfaces` (`page`, `bar`: a hidden
 command and `every` s) answered with `blocks` (stats, meter, list, markdown, buttons) or a `bar` line in 5 s and 2 s. Story
-165: `gauges`, popover (5 s), `section`, `resetsAt`, `chat`, `input`, `badges`/`inline`, `ask`, `refresh`, push to no-view, `pilot`.
+165: `gauges`, popover (5 s), `section`, `resetsAt`, `chat`, `input`, `badges`/`inline`, `ask`, `refresh`, push to no-view, `pilot`;
+a meter's `mark` (a tick, 0-100) and `value` (the figure in place of its percent).
 
 ## Adding or changing an extension
 
