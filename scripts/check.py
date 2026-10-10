@@ -11,6 +11,8 @@ plain words; `examples`, one or two concrete uses (Pilot's story 158); `requires
 of names; `hidden` a boolean; at least one shown command; at most 200 files, 2 MB a file, 10 MB in all; Python
 programs start `#!/usr/bin/env python3`. `surfaces` (Pilot's story 161): an object whose `page` and `bar` each name one
 of its commands and may give `every`, a number of seconds (Pilot holds a page to 10 s and a bar item to 60 s at least).
+`keyword` (2026-10-10): one lowercase word on a no-view command, unique in the extension; "todo buy milk" in Hyper+Space
+runs it with "buy milk" as its input (Pilot ignores one it can't read; this check refuses it).
 """
 import importlib.util
 import json
@@ -100,7 +102,7 @@ def check_commands(folder, manifest, problems):
     if not isinstance(commands, list) or not commands:
         problems.append("no commands")
         return
-    names = set()
+    names, keywords = set(), set()
     for c in commands:
         name = c.get("name")
         if not all(isinstance(c.get(k), str) for k in ("name", "title", "mode", "run")):
@@ -124,6 +126,15 @@ def check_commands(folder, manifest, problems):
             problems.append("command %s: hidden must be true or false" % name)
         if "icon" in c and not is_emoji(c["icon"]):
             problems.append("command %s: icon must be one emoji" % name)
+        if "keyword" in c:
+            keyword = c["keyword"]
+            if not isinstance(keyword, str) or not NAME.match(keyword):
+                problems.append("command %s: keyword must be one word of lowercase letters, digits and hyphens" % name)
+            elif c["mode"] != "no-view":
+                problems.append("command %s: only a no-view command takes a keyword" % name)
+            elif keyword in keywords:
+                problems.append("two commands with keyword \"%s\"" % keyword)
+            keywords.add(keyword if isinstance(keyword, str) else "")
     if all(c.get("hidden") for c in commands):
         problems.append("every command is hidden: nothing shows in Hyper+Space")
 

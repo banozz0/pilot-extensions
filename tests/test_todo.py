@@ -1,7 +1,7 @@
 import json
 import time
 
-from harness import ExtensionTestCase
+from harness import ExtensionTestCase, manifest
 
 
 class TodoTests(ExtensionTestCase):
@@ -30,6 +30,14 @@ class TodoTests(ExtensionTestCase):
         self.assertEqual(r.of_type("hud")[0]["text"], "Added: buy milk")
         [t] = self.stored()
         self.assertEqual((t["text"], t["done"]), ("buy milk", False))
+
+    def test_todo_buy_milk_in_hyper_space_adds_it_in_one_step(self):
+        # Pilot's keyword answer: "todo buy milk" runs add with input "buy milk" and no context.
+        add = next(c for c in manifest(self.EXTENSION)["commands"] if c["name"] == "add")
+        self.assertEqual((add["keyword"], add["mode"]), ("todo", "no-view"))
+        r = self.run_ext("add", input="buy milk")
+        self.assertEqual(r.of_type("hud")[0]["text"], "Added: buy milk")
+        self.assertEqual([t["text"] for t in self.stored()], ["buy milk"])
 
     def test_add_from_a_row_takes_the_context_text_and_empty_says_so(self):
         self.run_ext("add", context={"text": "call mum"})
