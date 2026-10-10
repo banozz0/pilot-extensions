@@ -29,6 +29,7 @@ TIMEOUTS = {"list": 2.0, "detail": 2.0, "no-view": 30.0, "page": 5.0, "bar": 2.0
 ITEM_ACTIONS = {"open": "url", "copy": "text", "paste": "text", "push": "command", "run": "command", "hud": "text",
                 "pilot": "action"}
 ACTIONS = dict(ITEM_ACTIONS, timer="seconds", alert="text")
+INLINE_ICONS = {"bubble", "moon", "sun", "pencil", "tag", "xmark", "arrow.up", "arrow.down", "terminal", "refresh"}
 
 _spec = importlib.util.spec_from_file_location("check", ROOT / "scripts" / "check.py")
 check = importlib.util.module_from_spec(_spec)
@@ -130,10 +131,10 @@ class Sandbox:
         return self.log.read_text().splitlines() if self.log.exists() else []
 
     def run(self, ext_id, command, query=None, context=None, preferences=None, home=None, timeout=None, folder=None,
-            surface=None):
+            surface=None, pilot=None):
         """Runs `command`, from `folder` when given (an installed copy), else from the repo; `surface` ("page" or "bar")
         runs it as that surface does (or "popover", a bar item's click), the surface named in the run message and its time
-        limit applied."""
+        limit applied; `pilot` is Pilot's defaults in the run message (story 165: repos, terminal)."""
         folder = Path(folder or EXTENSIONS / ext_id)
         m = manifest(ext_id, folder)
         spec = next(c for c in m["commands"] if c["name"] == command)
@@ -147,6 +148,8 @@ class Sandbox:
             message["context"] = context
         if surface is not None:
             message["surface"] = surface
+        if pilot is not None:
+            message["pilot"] = pilot
         env = {"HOME": str(home or self.home), "USER": os.environ.get("USER", "sven"), "TMPDIR": str(self.tmp) + "/",
                "PATH": ":".join([str(program.parent), str(self.shims), SYSTEM_PATH]),
                "LANG": "en_US.UTF-8", "PILOT_EXTENSION_ID": ext_id}
@@ -187,6 +190,14 @@ class ExtensionTestCase(unittest.TestCase):
                     self.assertIsInstance(item[key], str, key)
             for action in item.get("actions", []):
                 self.assertActionShape(action, ITEM_ACTIONS)
+            self.assertLessEqual(len(item.get("badges", [])), 3)  # story 165: badges and inline buttons, 3 each
+            for badge in item.get("badges", []):
+                self.assertIsInstance(badge.get("text"), str)
+                self.assertIn(badge.get("tone"), self.TONES)
+            self.assertLessEqual(len(item.get("inline", [])), 3)
+            for action in item.get("inline", []):
+                self.assertActionShape(action, ITEM_ACTIONS)
+                self.assertIn(action.get("icon"), INLINE_ICONS, action)
 
     def assertActionShape(self, action, fields=ACTIONS):
         self.assertIn(action.get("type"), fields, action)
@@ -194,7 +205,7 @@ class ExtensionTestCase(unittest.TestCase):
         if action["type"] in ("run", "push"):
             names = {c["name"]: c for c in manifest(self.EXTENSION)["commands"]}
             self.assertIn(action["command"], names, "names a command the extension lacks")
-            wanted = "no-view" if action["type"] == "run" else ("list", "detail")
+            wanted = "no-view" if action["type"] == "run" else ("list", "detail", "no-view")  # a push in a popover: 165
             self.assertIn(names[action["command"]]["mode"], wanted, action)
 
     BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons", "section"}

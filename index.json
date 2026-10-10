@@ -232,6 +232,52 @@
       ]
     },
     {
+      "id": "git",
+      "title": "Git",
+      "icon": "🌿",
+      "version": "1.0.0",
+      "description": "See which of your git repos have changes to commit or commits to push or pull, and pull, push or open lazygit in one click.",
+      "examples": [
+        "The menu bar shows ⎇ 2: click it to see pilot with 3 changed files and agents with 2 commits to push, then Push",
+        "Type pil: pilot with its branch and changes; Return opens it in Ghostty, Cmd+K lazygit, Finder or its GitHub page"
+      ],
+      "requires": [
+        "python3",
+        "git"
+      ],
+      "commands": [
+        {
+          "name": "repos",
+          "title": "Git repos",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [
+          "your git remotes (fetch, pull, push)"
+        ],
+        "clipboard": false,
+        "files": [
+          "~/code"
+        ],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "24f5e3d8b4209f5fadc88a512c3818e9477dbf8f416c1f27ee6f605d2e4fd339",
+          "size": 1997,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "ffc63f25e0e3356e0570ee0e4c008be8bf4127a8a49558be08bc8d438bbe4f64",
+          "size": 28735,
+          "executable": true
+        }
+      ]
+    },
+    {
       "id": "github",
       "title": "GitHub",
       "icon": "🐙",
@@ -443,50 +489,6 @@
           "path": "main.py",
           "sha256": "d028706948a4729c8f3971493aae25496983172f9f06444c0925a5248df388b6",
           "size": 5578,
-          "executable": true
-        }
-      ]
-    },
-    {
-      "id": "repos",
-      "title": "Repos",
-      "icon": "🌿",
-      "version": "1.0.1",
-      "description": "Jump into any of your git repos and see which ones have work not committed yet.",
-      "examples": [
-        "Type pil: pilot with its branch and 3 changed files; Return opens it in Ghostty",
-        "Cmd+K on a repo: lazygit, Finder or its GitHub page"
-      ],
-      "requires": [
-        "python3",
-        "git"
-      ],
-      "commands": [
-        {
-          "name": "repos",
-          "title": "Git repos",
-          "mode": "list"
-        }
-      ],
-      "permissions": {
-        "network": [],
-        "clipboard": false,
-        "files": [
-          "~/code"
-        ],
-        "actions": []
-      },
-      "files": [
-        {
-          "path": "extension.json",
-          "sha256": "3f87b768eaf93ee62c6065239eaabd4d01bbf0aac09bd894e60173440caf408c",
-          "size": 1214,
-          "executable": false
-        },
-        {
-          "path": "main.py",
-          "sha256": "f87c5f3772358e94d76b81c79e6ce3d4e4034dd98929059cbab55ae643799a41",
-          "size": 11235,
           "executable": true
         }
       ]
