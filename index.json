@@ -380,7 +380,7 @@
       "id": "pomodoro",
       "title": "Pomodoro",
       "icon": "🍅",
-      "version": "1.0.1",
+      "version": "1.1.0",
       "description": "Work in focused blocks with short breaks, the time left counting down in the menu bar.",
       "examples": [
         "Focus: 25 minutes start counting down in the menu bar",
@@ -440,14 +440,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "e8d2cae096d89ba84c9cd4c5be846c43a86e099b4394cc45166f97e280f3eddb",
-          "size": 4135,
+          "sha256": "558702e63d5997ff5e3ed65c191d1e62a593b78693201d312d48e2bb822a2453",
+          "size": 4300,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "ec3f77a1917d7e779a71160a25d51d07e03e358ea3b1971649d81e74bc6f3825",
-          "size": 11573,
+          "sha256": "56fa002ba546d25a75d76e7b9674fadae448ef3c86f07cd987bf9a7afc95655c",
+          "size": 13409,
           "executable": true
         }
       ]

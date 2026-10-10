@@ -4,7 +4,8 @@
 Every command is this one program; Pilot names the command in the run message on stdin. The state lives in
 paths.data/state.json: the day, the focus blocks ended that day, and the block running or paused. Pilot counts the
 timer down and at zero runs the hidden `ended` command, which counts the block, then shows the end alert, or with
-"Start the next block by itself" starts the next block and says so in a HUD with the end sound.
+"Start the next block by itself" starts the next block and says so in a HUD with the end sound. The hidden `page`
+command is its page (and Home block): the countdown as a meter, today's blocks and Focus, Break, Pause, Stop.
 """
 import json
 import math
@@ -137,8 +138,8 @@ def timer(block, state, s, now):
 
 def start(state, s, phase, minutes, long=False, say=True):
     now = time.time()
-    block = {"id": "%d-%s" % (int(now * 1000), phase), "phase": phase, "long": long, "ends": now + minutes * 60,
-             "left": None}
+    block = {"id": "%d-%s" % (int(now * 1000), phase), "phase": phase, "long": long, "length": minutes * 60,
+             "ends": now + minutes * 60, "left": None}
     state.block = block
     state.save()
     act(timer(block, state, s, now))
@@ -231,6 +232,36 @@ def today_detail(state, s, now):
     send({"type": "detail", "markdown": markdown, "metadata": metadata, "actions": actions})
 
 
+def page(state, s, now):
+    """The page's blocks: the block as a meter of the time left, today's blocks, and its buttons; asked every 5 s
+    while a block counts down, so the meter moves."""
+    block = state.live(now)
+    actions = [run_action("focus", "Focus"), run_action("break", "Break")]
+    if block is None:
+        meter = {"type": "meter", "label": "Next: " + title({"phase": "focus"}, state, s), "percent": 0,
+                 "value": clock(s.focus * 60), "note": "Nothing running"}
+    else:
+        seconds = max(0, left(block, now))
+        # A block started before 1.1.0 has no length: it reads full.
+        length = block.get("length") or seconds or 1
+        meter = {"type": "meter", "label": title(block, state, s), "percent": round(min(seconds / length, 1) * 100, 1),
+                 "value": clock(seconds)}
+        if paused(block):
+            meter.update(note="Paused", tone="warn")
+        else:
+            meter["note"] = "Ends %s" % time.strftime("%H:%M", time.localtime(block["ends"]))
+            if block["phase"] != "focus":
+                meter["tone"] = "fine"
+        actions += buttons(block)
+    long_break = "next break" if rest_length(state, s)[1] else "%d more" % (s.every - state.today % s.every)
+    stats = {"type": "stats", "items": [{"label": "Blocks today", "value": str(state.today)},
+                                        {"label": "Long break after", "value": long_break}]}
+    answer = {"type": "blocks", "blocks": [meter, stats, {"type": "buttons", "actions": actions}]}
+    if block is not None and not paused(block):
+        answer["refresh"] = 5
+    send(answer)
+
+
 def main():
     try:
         run = json.loads(sys.stdin.readline())
@@ -292,6 +323,8 @@ def main():
         ended(state, s, context)
     elif command == "today":
         today_detail(state, s, now)
+    elif command == "page":
+        page(state, s, now)
     else:
         send({"type": "error", "text": "has no command %s" % command})
 

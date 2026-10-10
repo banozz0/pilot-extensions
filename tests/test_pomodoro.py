@@ -182,3 +182,47 @@ class PomodoroTests(ExtensionTestCase):
         self.assertEqual([a["title"] for a in d["actions"]], ["Resume", "Stop"])
         for a in d["actions"]:
             self.assertActionShape(a)
+
+    # ---- page (Home block) ----
+
+    def test_page_with_nothing_running_offers_focus_and_break(self):
+        self.write_state(count=2)
+        message = self.blocks_message("page", "page")
+        self.assertNotIn("refresh", message, "nothing counts down, so no fast pace")
+        meter, stats, buttons = message["blocks"]
+        self.assertEqual((meter["type"], meter["label"], meter["percent"], meter["value"]),
+                         ("meter", "Next: Focus 3 of 4", 0, "25:00"))
+        self.assertEqual({i["label"]: i["value"] for i in stats["items"]}, {"Blocks today": "2", "Long break after": "2 more"})
+        self.assertEqual([a["title"] for a in buttons["actions"]], ["Focus", "Break"])
+
+    def test_page_counts_a_running_focus_down_on_a_5_s_pace(self):
+        self.write_state(count=1, block=self.block(ends_in=600))
+        message = self.blocks_message("page", "page")
+        self.assertEqual(message["refresh"], 5)
+        meter, stats, buttons = message["blocks"]
+        self.assertEqual(meter["label"], "Focus 2 of 4")
+        self.assertIn(meter["value"], ("10:00", "9:59"))
+        self.assertAlmostEqual(meter["percent"], 40, delta=0.2)
+        self.assertTrue(meter["note"].startswith("Ends ") and "tone" not in meter)
+        self.assertEqual(stats["items"][0]["value"], "1")
+        self.assertEqual([(a["title"], a["command"]) for a in buttons["actions"]],
+                         [("Focus", "focus"), ("Break", "break"), ("Pause", "pause"), ("Skip", "skip"), ("Stop", "stop")])
+
+    def test_page_shows_a_paused_block_held_with_resume(self):
+        self.write_state(block=self.block(left=300))
+        message = self.blocks_message("page", "page")
+        self.assertNotIn("refresh", message, "a paused block does not move")
+        meter, _, buttons = message["blocks"]
+        self.assertEqual((meter["value"], meter["percent"], meter["note"], meter["tone"]), ("5:00", 20, "Paused", "warn"))
+        self.assertEqual([a["title"] for a in buttons["actions"]], ["Focus", "Break", "Resume", "Stop"])
+
+    def test_page_shows_a_break_in_the_fine_tone_and_focus_stores_its_length(self):
+        self.run_ext("break")
+        self.assertEqual(self.state()["block"]["length"], 300)
+        meter = self.page()[0]
+        self.assertEqual((meter["label"], meter["tone"]), ("Break", "fine"))
+        self.assertGreater(meter["percent"], 99)
+
+    def test_page_says_the_long_break_is_next_as_today_does(self):
+        self.write_state(count=4)
+        self.assertEqual(self.page()[1]["items"][1]["value"], "next break")

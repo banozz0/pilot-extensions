@@ -18,7 +18,7 @@ Every extension here needs `python3`, which macOS has.
 
 | Extension | Commands | What it does |
 | --- | --- | --- |
-| 🍅 Pomodoro | Focus, Break, Custom focus…, Pause timer, Resume timer, Skip block, Stop timer, Pomodoro today | Focus blocks and breaks counted down in Pilot's Timer item, the long break every few blocks, an alert or the next block when one ends. |
+| 🍅 Pomodoro | Focus, Break, Custom focus…, Pause timer, Resume timer, Skip block, Stop timer, Pomodoro today | Focus blocks and breaks counted down in Pilot's Timer item, the long break every few blocks, an alert or the next block when one ends; a page (and Home block) with the countdown, today's blocks and its buttons. |
 | 🔌 Ports | Kill port | Every listening TCP port with the program holding it; Quit, Force quit, open or copy its localhost URL, copy the PID. Never Pilot, never pid 1. |
 | 🌿 lazygit (id `git`) | lazygit repos | Which of your repos (Pilot's Repos folder, default ~/code) have changes to commit or commits to push or pull: a menu-bar item counting them, a popover and a page where a click on a repo opens lazygit in it (in Pilot's terminal), with Pull (fast-forward only) and Push on each and a plain terminal, Finder or GitHub under ⋯; Fetch all, and a fetch when the popover or page opens, at most every 10 min. Replaces Repos (kept on the `parked/repos` branch). |
 | 🤖 Claude Sessions | Claude sessions | Your 60 newest Claude Code sessions by title, folder and age; copy or paste the command that resumes one in its folder, open the folder, or see its facts (branch, start, messages, model) with Show details. Read only; a prompt shows only as a short title. |

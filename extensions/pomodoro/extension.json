@@ -2,10 +2,11 @@
   "id": "pomodoro",
   "title": "Pomodoro",
   "icon": "🍅",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Work in focused blocks with short breaks, the time left counting down in the menu bar.",
   "examples": ["Focus: 25 minutes start counting down in the menu bar", "At zero Pilot's alert offers Start break; every 4th break is the long one"],
   "runtime": "process",
+  "surfaces": { "page": { "command": "page", "every": 60 } },
   "requires": ["python3"],
   "permissions": {},
   "preferences": [
@@ -56,6 +57,7 @@
     { "name": "stop", "title": "Stop timer", "icon": "⏹️", "mode": "no-view", "run": "main.py" },
     { "name": "today", "title": "Pomodoro today", "mode": "detail", "run": "main.py" },
     { "name": "next", "title": "Start next block", "mode": "no-view", "hidden": true, "run": "main.py" },
-    { "name": "ended", "title": "Block ended", "mode": "no-view", "hidden": true, "run": "main.py" }
+    { "name": "ended", "title": "Block ended", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "page", "title": "Pomodoro page", "mode": "no-view", "hidden": true, "run": "main.py" }
   ]
 }
