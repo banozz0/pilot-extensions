@@ -18,7 +18,9 @@ Pilot's ADR 0010 (`~/code/pilot/docs/adr/0010-extensions-speak-json-lines-pilot-
 JSON run message on stdin (command, query, context, preferences, paths.data, paths.cache), JSON lines on stdout,
 a fixed environment, list and detail answers within 2 s, no-view within 30 s. Manifest rules mirror
 `~/code/pilot/Sources/PilotCore/Extension.swift`. Added 2026-10-10: `"hidden": true` commands, several actions per
-no-view run, `hud` and `alert` with `sound`, the `timer` action.
+no-view run, `hud` and `alert` with `sound`, the `timer` action. Added for Pilot story 161: `surfaces` (`page` and `bar`, each a
+hidden command and `every` seconds) answered with `blocks` (stats, meter, list, markdown, buttons) or a `bar` line,
+within 5 s (page) and 2 s (bar); the harness's `page()` and `bar()` check them.
 
 ## Adding or changing an extension
 

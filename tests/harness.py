@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 EXTENSIONS = ROOT / "extensions"
 SYSTEM_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-TIMEOUTS = {"list": 2.0, "detail": 2.0, "no-view": 30.0}
+TIMEOUTS = {"list": 2.0, "detail": 2.0, "no-view": 30.0, "page": 5.0, "bar": 2.0}  # a page's and a bar item's: story 161
 # Each action type and the field it needs; an item carries the first seven, a no-view run may also print the last two.
 ITEM_ACTIONS = {"open": "url", "copy": "text", "paste": "text", "push": "command", "run": "command", "hud": "text",
                 "pilot": "action"}
@@ -129,8 +129,10 @@ class Sandbox:
     def shim_calls(self):
         return self.log.read_text().splitlines() if self.log.exists() else []
 
-    def run(self, ext_id, command, query=None, context=None, preferences=None, home=None, timeout=None, folder=None):
-        """Runs `command`, from `folder` when given (an installed copy), else from the repo."""
+    def run(self, ext_id, command, query=None, context=None, preferences=None, home=None, timeout=None, folder=None,
+            surface=None):
+        """Runs `command`, from `folder` when given (an installed copy), else from the repo; `surface` ("page" or "bar")
+        runs it as that surface does, the surface named in the run message and its time limit applied."""
         folder = Path(folder or EXTENSIONS / ext_id)
         m = manifest(ext_id, folder)
         spec = next(c for c in m["commands"] if c["name"] == command)
@@ -142,10 +144,12 @@ class Sandbox:
             message["query"] = query or ""
         if context is not None:
             message["context"] = context
+        if surface is not None:
+            message["surface"] = surface
         env = {"HOME": str(home or self.home), "USER": os.environ.get("USER", "sven"), "TMPDIR": str(self.tmp) + "/",
                "PATH": ":".join([str(program.parent), str(self.shims), SYSTEM_PATH]),
                "LANG": "en_US.UTF-8", "PILOT_EXTENSION_ID": ext_id}
-        limit = TIMEOUTS[spec["mode"]] if timeout is None else timeout
+        limit = TIMEOUTS[surface or spec["mode"]] if timeout is None else timeout
         started = time.monotonic()
         proc = subprocess.Popen([str(program)], cwd=str(program.parent), env=env, stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
@@ -191,3 +195,50 @@ class ExtensionTestCase(unittest.TestCase):
             self.assertIn(action["command"], names, "names a command the extension lacks")
             wanted = "no-view" if action["type"] == "run" else ("list", "detail")
             self.assertIn(names[action["command"]]["mode"], wanted, action)
+
+    BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons"}
+
+    def assertBlocksShape(self, blocks):
+        """Every block as Pilot decodes it (story 161): a v1 type with its fields; a list's items and the buttons' actions
+        as an item's."""
+        self.assertIsInstance(blocks, list)
+        for block in blocks:
+            self.assertIn(block.get("type"), self.BLOCK_TYPES, block)
+            kind = block["type"]
+            if kind == "stats":
+                self.assertTrue(block["items"])
+                for stat in block["items"]:
+                    self.assertIsInstance(stat.get("label"), str)
+                    self.assertIsInstance(stat.get("value"), str)
+                    self.assertIn(stat.get("tone"), (None, "fine", "warn", "alert"))
+            elif kind == "meter":
+                self.assertIsInstance(block.get("label"), str)
+                self.assertIsInstance(block.get("percent"), (int, float))
+                self.assertIn(block.get("tone"), (None, "fine", "warn", "alert"))
+            elif kind == "list":
+                self.assertItemShape(block["items"])
+            elif kind == "markdown":
+                self.assertIsInstance(block.get("text"), str)
+            else:
+                self.assertTrue(block["actions"])
+                for action in block["actions"]:
+                    self.assertActionShape(action, ITEM_ACTIONS)
+
+    def page(self, **kwargs):
+        """The page command's one blocks message, its shape checked."""
+        result = self.run_ext("page", surface="page", **kwargs)
+        found = result.of_type("blocks")
+        self.assertEqual(len(found), 1, result.stdout)
+        self.assertBlocksShape(found[0]["blocks"])
+        return found[0]["blocks"]
+
+    def bar(self, **kwargs):
+        """The bar command's one bar message: a short text, a tone, blocks for its dropdown."""
+        result = self.run_ext("bar", surface="bar", **kwargs)
+        found = result.of_type("bar")
+        self.assertEqual(len(found), 1, result.stdout)
+        self.assertIsInstance(found[0].get("text"), str)
+        self.assertLessEqual(len(found[0]["text"]), 24)
+        self.assertIn(found[0].get("tone"), (None, "fine", "warn", "alert"))
+        self.assertBlocksShape(found[0].get("blocks", []))
+        return found[0]

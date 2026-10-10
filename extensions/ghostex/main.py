@@ -120,17 +120,14 @@ def ago(seconds):
     return "%d d ago" % (seconds // 86400)
 
 
-def list_sessions():
+def sessions():
+    """Every session as a list row, what asks Sven first, with its state and project; or why there are none."""
     answer, error = ghostex(["sessions", "--json", "--full"], max(0.1, STARTED + LIST_BUDGET - time.monotonic()))
     if error:
-        send({"type": "list", "items": [{"title": "Ghostex sessions are not available", "subtitle": error,
-                                         "icon": "⚠️"}]})
-        return
+        return None, error
     sessions = answer.get("sessions") if isinstance(answer, dict) else None
     if not isinstance(sessions, list):
-        send({"type": "list", "items": [{"title": "Ghostex sessions are not available",
-                                         "subtitle": "ghostex sessions gave no session list", "icon": "⚠️"}]})
-        return
+        return None, "ghostex sessions gave no session list"
     names = agent_names(answer)
     now = time.time()
     rows = []
@@ -155,16 +152,49 @@ def list_sessions():
             actions.append({"type": "run", "command": "sleep", "title": "Sleep", "context": {"ref": ref}})
         if allowed.get("wake") or asleep:
             actions.append({"type": "run", "command": "wake", "title": "Wake", "context": {"ref": ref}})
-        items.append({"id": ref, "title": title,
-                      "subtitle": " · ".join(x for x in (project, agent, words, ago(idle_for)) if x),
-                      "icon": icon,
-                      "keywords": " ".join(x for x in (project, agent or "", state_words,
-                                                       str(s.get("alias") or "")) if x),
-                      "actions": actions})
+        items.append(({"id": ref, "title": title,
+                       "subtitle": " · ".join(x for x in (project, agent, words, ago(idle_for)) if x),
+                       "icon": icon,
+                       "keywords": " ".join(x for x in (project, agent or "", state_words,
+                                                        str(s.get("alias") or "")) if x),
+                       "actions": actions}, state, project))
+    return items, None
+
+
+def list_sessions():
+    rows, error = sessions()
+    if error:
+        send({"type": "list", "items": [{"title": "Ghostex sessions are not available", "subtitle": error, "icon": "⚠️"}]})
+        return
+    items = [row for row, _, _ in rows]
     if not items:
         items = [{"title": "No Ghostex sessions", "subtitle": "Start an agent in Ghostex and it shows here",
                   "icon": "👻"}]
     send({"type": "list", "items": items})
+
+
+def page():
+    """The page (Pilot story 161): how many sessions are in each state, then one list per project, its sessions in the
+    list's order; a click focuses, the ⋯ menu sleeps or wakes."""
+    rows, error = sessions()
+    if error:
+        send({"type": "blocks", "blocks": [{"type": "markdown", "text": "Ghostex sessions are not available: %s" % error}]})
+        return
+    count = {state: sum(1 for _, s, _ in rows if s == state) for state in STATES}
+    stats = [{"label": "Ask you something", "value": str(count["question"]), "tone": "warn" if count["question"] else None},
+             {"label": "Working", "value": str(count["working"]), "tone": "fine" if count["working"] else None},
+             {"label": "Idle", "value": str(count["idle"])}, {"label": "Asleep", "value": str(count["asleep"])}]
+    blocks = [{"type": "stats", "items": stats}]
+    projects = []
+    for _, _, project in rows:
+        if project not in projects:
+            projects.append(project)
+    for project in projects:
+        blocks.append({"type": "list", "title": project or "No project",
+                       "items": [row for row, _, p in rows if p == project]})
+    if not rows:
+        blocks.append({"type": "markdown", "text": "No Ghostex sessions. Start an agent in Ghostex and it shows here."})
+    send({"type": "blocks", "blocks": blocks})
 
 
 def context_ref(run):
@@ -218,6 +248,8 @@ def main():
     command = run.get("command")
     if command == "sessions":
         list_sessions()
+    elif command == "page":
+        page()
     elif command == "focus":
         focus(run)
     elif command in ("sleep", "wake"):

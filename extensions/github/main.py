@@ -371,15 +371,21 @@ SECTIONS = {
 REFRESH = {"type": "run", "command": "refresh", "title": "Refresh now"}
 
 
-def show(run, command):
+def current(run, fresh=FRESH):
+    """The cache as it is, the owner filter, and whether a refresh runs: one is started when the cache is older than
+    `fresh` seconds, marked stale or kept for another filter."""
     folder = cache_dir(run)
     only = only_preference(run)
-    wanted = rules(only)
     cache = load(folder)
     now = time.time()
     last = max(cache.get("fetched") or 0, cache.get("tried") or 0)
-    stale = cache.get("stale") or now - last > FRESH or (cache.get("fetched") and cache.get("only", "") != only)
+    stale = cache.get("stale") or now - last > fresh or (cache.get("fetched") and cache.get("only", "") != only)
     running = start_refresh(folder, only) if stale else refreshing(folder)
+    return cache, rules(only), running, now
+
+
+def show(run, command):
+    cache, wanted, running, now = current(run)
     if not cache.get("fetched"):
         if cache.get("error") and not running:
             row = {"title": "Could not reach GitHub", "subtitle": cache["error"], "icon": "⚠️",
@@ -402,6 +408,61 @@ def show(run, command):
         items.append({"title": "Could not refresh: %s" % cache["error"], "subtitle": seen, "icon": "⚠️",
                       "actions": [dict(REFRESH, title="Try again")]})
     send({"type": "list", "items": items})
+
+
+# ---- surfaces (Pilot story 161): the page and the top-bar item ----
+
+BAR_FRESH = 600  # the bar item asks GitHub at most every ten minutes; the page and lists keep FRESH
+
+
+def counts(cache, wanted, now):
+    pulls = pull_items(cache, wanted, now)
+    waiting = [i for i in pulls if i["icon"] == "👀"]
+    return waiting, [i for i in pulls if i["icon"] != "👀"], run_items(cache, wanted, now), issue_items(cache, wanted, now)
+
+
+def page(run):
+    cache, wanted, running, now = current(run)
+    if not cache.get("fetched"):
+        text = ("Could not reach GitHub: %s" % cache["error"]) if cache.get("error") and not running else \
+            "Fetching from GitHub… this page asks again on its own."
+        send({"type": "blocks", "blocks": [{"type": "markdown", "text": text},
+                                           {"type": "buttons", "actions": [REFRESH]}]})
+        return
+    waiting, mine, runs, issues = counts(cache, wanted, now)
+    blocks = [{"type": "stats", "items": [
+        {"label": "Wait on your review", "value": str(len(waiting)), "tone": "warn" if waiting else None},
+        {"label": "Your pull requests", "value": str(len(mine))},
+        {"label": "Failing CI runs", "value": str(len(runs)), "tone": "alert" if runs else "fine"},
+        {"label": "Issues for you", "value": str(len(issues))}]}]
+    for title, items in (("Waiting on your review", waiting), ("Your pull requests", mine),
+                         ("Failing CI runs this week", runs), ("Issues assigned to you", issues)):
+        if items:
+            blocks.append({"type": "list", "title": title, "items": items[:20]})
+    note = "Updated %s" % ago(now - cache["fetched"])
+    if running:
+        note += ", refreshing now"
+    elif cache.get("error"):
+        note += ". Could not refresh: %s" % cache["error"]
+    blocks.append({"type": "markdown", "text": note + "."})
+    blocks.append({"type": "buttons", "actions": [REFRESH]})
+    send({"type": "blocks", "blocks": blocks})
+
+
+def bar(run):
+    cache, wanted, _, now = current(run, BAR_FRESH)
+    if not cache.get("fetched"):
+        send({"type": "bar", "text": ""})
+        return
+    waiting, _, runs, _ = counts(cache, wanted, now)
+    # Quiet unless something needs Sven: red CI first, then reviews waiting.
+    text, tone = ("CI %d red" % len(runs), "alert") if runs else (("%d to review" % len(waiting), "warn") if waiting else ("", None))
+    blocks = []
+    if runs:
+        blocks.append({"type": "list", "title": "Failing CI runs", "items": runs[:5]})
+    if waiting:
+        blocks.append({"type": "list", "title": "Waiting on your review", "items": waiting[:5]})
+    send({"type": "bar", "text": text, "tone": tone, "blocks": blocks})
 
 
 # ---- hidden commands ----
@@ -453,6 +514,10 @@ def main():
     command = run.get("command")
     if command in SECTIONS:
         show(run, command)
+    elif command == "page":
+        page(run)
+    elif command == "bar":
+        bar(run)
     elif command == "refresh":
         refresh(run)
     elif command == "rerun":

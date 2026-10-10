@@ -170,6 +170,28 @@ class AIUsageTests(ExtensionTestCase):
         self.assertEqual([a["title"] for a in d["actions"]], ["Copy summary"])
         self.assertTrue(self.hud().endswith(" · Claude block 1.2M tokens"))
 
+    def test_page_and_bar_show_the_limits_and_the_block(self):
+        n = self.now
+        self.codex_log("newest", [codex_event(n - 10 * MIN, window(72.0, 300, n + 2 * HOUR + 30), window(18.0, 10080, n + 3 * DAY))])
+        self.claude_fixture()
+        blocks = self.page(home=self.box.home)
+        self.assertEqual(blocks[0]["items"], [
+            {"label": "Codex 5 h", "value": "72%", "tone": "warn"}, {"label": "Codex week", "value": "18%", "tone": "fine"},
+            {"label": "Claude block", "value": "1.2M"}, {"label": "Claude 7 days", "value": "1.2M"}])
+        meters = [b for b in blocks if b["type"] == "meter"]
+        self.assertEqual([(m["label"], m["percent"]) for m in meters][:2], [("Codex 5 h", 72.0), ("Codex week", 18.0)])
+        self.assertTrue(meters[0]["note"].endswith("(in 2 h)"), meters[0]["note"])
+        self.assertEqual(meters[2]["label"], "Claude block time")
+        self.assertEqual(blocks[-1]["actions"][0]["title"], "Copy summary")
+        bar = self.bar(home=self.box.home)
+        self.assertEqual((bar["text"], bar["tone"]), ("AI 72%", "warn"))
+        self.assertEqual([b["label"] for b in bar["blocks"]], ["Codex 5 h", "Codex week"])
+
+    def test_bar_hides_with_nothing_to_say(self):
+        bar = self.bar(home=self.box.home)
+        self.assertEqual((bar["text"], bar["blocks"]), ("", []))
+        self.assertIn("No Codex logs", json.dumps(self.page(home=self.box.home)))
+
     def test_no_block_running_after_a_quiet_5_hours(self):
         self.write(self.projects / "p" / "s.jsonl", [claude_line(self.now - 6 * HOUR, "msg_1", read=4000)])
         d, facts = self.detail()

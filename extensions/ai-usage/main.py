@@ -33,6 +33,8 @@ CACHE_VERSION = 1
 SEEN_KEEP = 512  # message ids remembered per log to fold repeated lines into one; repeats sit close together
 DETAIL_SCAN = 1.0  # seconds from start a detail may spend reading Claude logs; the rest goes to the background
 SUMMARY_SCAN = 25.0
+PAGE_SCAN = 3.0  # a page's command may take 5 s (Pilot story 161); a bar item's 2 s, so it reads less
+BAR_SCAN = 0.8
 SUMMARY_WAIT = 15.0
 REFRESH_SCAN = 120.0
 CODEX_TAILS = (256 * 1024, 4 * 1024 * 1024, 32 * 1024 * 1024)
@@ -544,6 +546,71 @@ def show_summary(run):
     send({"type": "hud", "text": summary_line(data)})
 
 
+# Surfaces (Pilot story 161): the page in Pilot's app window and the top-bar item.
+
+
+def tone(percent):
+    return "alert" if percent >= 90 else "warn" if percent >= 70 else "fine"
+
+
+def live_limits(data):
+    """Codex's limits that have not reset since the log, as (name, percent, resets_at)."""
+    codex = data["codex"]
+    if codex["state"] != "ok":
+        return []
+    return [(l["name"], l["used_percent"], l["resets_at"]) for l in codex["limits"] if not l["reset_since"]]
+
+
+def limit_meters(data, now):
+    return [{"type": "meter", "label": "Codex %s" % name, "percent": round(pct, 1), "tone": tone(pct),
+             "note": "resets %s" % when(resets, now) if resets else "reset time unknown"}
+            for name, pct, resets in live_limits(data)]
+
+
+def show_page(run):
+    data = usage(cache_dir=(run.get("paths") or {}).get("cache"), deadline=START + PAGE_SCAN)
+    now, codex, claude = data["now"], data["codex"], data["claude"]
+    stats = [{"label": "Codex %s" % name, "value": "%d%%" % round(pct), "tone": tone(pct)} for name, pct, _ in live_limits(data)]
+    if claude["state"] == "ok":
+        block = claude["block"]
+        stats.append({"label": "Claude block", "value": short_tokens(block["tokens"]["total"]) if block else "none"})
+        stats.append({"label": "Claude 7 days", "value": short_tokens(claude["week"]["total"])})
+    blocks = [{"type": "stats", "items": stats}] if stats else []
+    blocks += limit_meters(data, now)
+    if codex["state"] != "ok":
+        blocks.append({"type": "markdown", "text": "No Codex logs on this Mac (~/.codex/sessions)." if codex["state"] == "missing"
+                       else "No Codex use logged in the last 8 days, so every limit has reset."})
+    if claude["state"] == "missing":
+        blocks.append({"type": "markdown", "text": "No Claude Code logs on this Mac (~/.claude/projects)."})
+    else:
+        block = claude["block"]
+        if block:
+            elapsed = now - block["start"]
+            blocks.append({"type": "meter", "label": "Claude block time", "percent": round(100 * min(elapsed / BLOCK, 1), 1),
+                           "note": "%s tokens since %s · resets %s" % (short_tokens(block["tokens"]["total"]),
+                                                                       time.strftime("%H:%M", time.localtime(block["start"])),
+                                                                       when(block["resets_at"], now))})
+        words = "Claude tokens count input, output and cache. Claude's share of its limit is in no local log, so it is unknown."
+        if not claude["complete"]:
+            words = "Still counting Claude's logs; this page asks again on its own. " + words
+        blocks.append({"type": "markdown", "text": words})
+    blocks.append({"type": "buttons", "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]})
+    send({"type": "blocks", "blocks": blocks})
+
+
+def show_bar(run):
+    data = usage(cache_dir=(run.get("paths") or {}).get("cache"), deadline=START + BAR_SCAN)
+    limits = live_limits(data)
+    if limits:
+        top = max(pct for _, pct, _ in limits)
+        text, level = "AI %d%%" % round(top), tone(top)
+    elif data["claude"]["state"] == "ok" and data["claude"]["block"]:
+        text, level = "AI %s" % short_tokens(data["claude"]["block"]["tokens"]["total"]), None
+    else:
+        text, level = "", None
+    send({"type": "bar", "text": text, "tone": level, "blocks": limit_meters(data, data["now"])})
+
+
 def background_refresh(cache_dir):
     signal.alarm(int(REFRESH_SCAN) + 30)
     lock = take_lock(cache_dir, 0)
@@ -569,6 +636,10 @@ def main():
         show_usage(run)
     elif command == "summary":
         show_summary(run)
+    elif command == "page":
+        show_page(run)
+    elif command == "bar":
+        show_bar(run)
     else:
         send({"type": "error", "text": "has no command %s" % command})
 

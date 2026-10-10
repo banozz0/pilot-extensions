@@ -9,7 +9,8 @@ checkbox, dropdown (with data), app, file, folder; preference names `[A-Za-z0-9_
 The catalogue's own (Pilot's PLAN section 3): folder name is the id; `version` x.y.z; a description, what it is for in
 plain words; `examples`, one or two concrete uses (Pilot's story 158); `requires` a list
 of names; `hidden` a boolean; at least one shown command; at most 200 files, 2 MB a file, 10 MB in all; Python
-programs start `#!/usr/bin/env python3`.
+programs start `#!/usr/bin/env python3`. `surfaces` (Pilot's story 161): an object whose `page` and `bar` each name one
+of its commands and may give `every`, a number of seconds (Pilot holds a page to 10 s and a bar item to 60 s at least).
 """
 import importlib.util
 import json
@@ -127,6 +128,22 @@ def check_commands(folder, manifest, problems):
         problems.append("every command is hidden: nothing shows in Hyper+Space")
 
 
+def check_surfaces(manifest, problems):
+    surfaces = manifest.get("surfaces")
+    if surfaces is None:
+        return
+    if not isinstance(surfaces, dict) or not set(surfaces) <= {"page", "bar"}:
+        problems.append("surfaces must be an object with page and bar")
+        return
+    names = {c.get("name") for c in manifest.get("commands") or [] if isinstance(c, dict)}
+    for kind, surface in surfaces.items():
+        if not isinstance(surface, dict) or surface.get("command") not in names:
+            problems.append("surfaces.%s must name one of its commands" % kind)
+        elif "every" in surface and (isinstance(surface["every"], bool) or not isinstance(surface["every"], (int, float))
+                                     or surface["every"] < (10 if kind == "page" else 60)):
+            problems.append("surfaces.%s: every must be at least %d seconds" % (kind, 10 if kind == "page" else 60))
+
+
 def check_files(folder, problems):
     found = build_index.files(folder)
     if len(found) > MAX_FILES:
@@ -178,6 +195,7 @@ def check(folder):
         problems.append("permissions must hold lists network, files, actions and a boolean clipboard")
     check_commands(folder, manifest, problems)
     check_preferences(manifest, problems)
+    check_surfaces(manifest, problems)
     check_files(folder, problems)
     return problems
 

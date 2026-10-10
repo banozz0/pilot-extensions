@@ -2,14 +2,17 @@
   "id": "ai-usage",
   "title": "AI usage",
   "icon": "📊",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "See how much of your Codex limits you have used and how many Claude Code tokens you have burned, and when each resets.",
   "examples": ["Type AI usage: Codex 5-hour and weekly limits as bars with their reset times, then Claude tokens this block and this week", "Bind AI usage summary to a key: one HUD line like Codex 5 h 52% · week 18% · Claude block 1.2M tokens"],
   "runtime": "process",
   "requires": ["python3"],
   "permissions": { "clipboard": true, "files": ["~/.codex/sessions", "~/.codex/archived_sessions", "~/.claude/projects"] },
+  "surfaces": { "page": { "command": "page", "every": 60 }, "bar": { "command": "bar", "every": 120 } },
   "commands": [
     { "name": "usage", "title": "AI usage", "mode": "detail", "run": "main.py" },
-    { "name": "summary", "title": "AI usage summary", "icon": "📈", "mode": "no-view", "run": "main.py" }
+    { "name": "summary", "title": "AI usage summary", "icon": "📈", "mode": "no-view", "run": "main.py" },
+    { "name": "page", "title": "AI usage page", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "bar", "title": "AI usage in the top bar", "mode": "no-view", "hidden": true, "run": "main.py" }
   ]
 }

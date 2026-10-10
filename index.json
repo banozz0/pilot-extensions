@@ -5,7 +5,7 @@
       "id": "ai-usage",
       "title": "AI usage",
       "icon": "📊",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "See how much of your Codex limits you have used and how many Claude Code tokens you have burned, and when each resets.",
       "examples": [
         "Type AI usage: Codex 5-hour and weekly limits as bars with their reset times, then Claude tokens this block and this week",
@@ -39,14 +39,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "2cfa96b78a64215b2a4ed1bbace35331c108c02e1fd0d495a075d91319a2faf7",
-          "size": 859,
+          "sha256": "70cc9f8b204d2051e7dcf057382e454d67ef10e6ae76dde2637c1018b44a2977",
+          "size": 1179,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "cabda7f6e8bbf711206b3d45e7945418de9e1f487ea67e16468b1ea66691a901",
-          "size": 23144,
+          "sha256": "6e55656a221207b8a0f4a49910c0db9c2de16d7a6feb38300f4ac4ad390b4535",
+          "size": 26854,
           "executable": true
         }
       ]
@@ -192,7 +192,7 @@
       "id": "ghostex",
       "title": "Ghostex sessions",
       "icon": "👻",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "Jump to any of your Ghostex agent sessions, and put idle ones to sleep or wake them, without hunting through the sidebar.",
       "examples": [
         "Type pilot: every session in the pilot project with its agent and whether it is working, idle or asleep; Return brings it up in Ghostex",
@@ -218,14 +218,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "1b73eabd9138053da9c4a1ea442baa7c8e145804b818eb268de596670caa0938",
-          "size": 980,
+          "sha256": "7b8ac32f080aa80afd31400dd9dc69966de4baac3bfbf610384f3a991ca718b9",
+          "size": 1145,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "c8ffe90d158a78251cda12f88f36af3a6d27a9d266e10b54584b1324aac5ffd8",
-          "size": 9392,
+          "sha256": "53d3481ff377dd07d1f7e1d6ec6e2e023df4f4d616da28c2c2e03a2cfce12e54",
+          "size": 10876,
           "executable": true
         }
       ]
@@ -234,7 +234,7 @@
       "id": "github",
       "title": "GitHub",
       "icon": "🐙",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "See what on GitHub needs you: pull requests waiting on your review, your own with their checks, issues given to you and CI runs that failed.",
       "examples": [
         "Type pull: PRs waiting on your review first, then yours, each with its checks passing or failing; Return opens it on github.com",
@@ -272,14 +272,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "f02e0a72d226c037b22699eb1e6483f0215f62c5d0da528b8f9d9e468de43d9d",
-          "size": 1377,
+          "sha256": "aa5bcbcc9641842d71aac7ae18dc14076461cd34207083a7976997818235cfdf",
+          "size": 1694,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "cee5df0e985f34766084372785f30cf604f2f13b8bf0a213d430dcc21afabbe2",
-          "size": 20172,
+          "sha256": "2a11dfd8070758e7d19d8eadaf2b242632e2403b5f8e10ebf629bd16a4786ad7",
+          "size": 23251,
           "executable": true
         }
       ]

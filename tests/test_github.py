@@ -168,6 +168,30 @@ class GithubTests(ExtensionTestCase):
             {"type": "copy", "text": "feat/thing", "title": "Copy branch name"}])
         self.assertEqual(len(self.gh_calls()), 4, "a fresh cache asks GitHub nothing")
 
+    def test_page_counts_and_lists_what_needs_you_from_the_cache(self):
+        before = self.page()
+        self.assertEqual(before[0], {"type": "markdown", "text": "Fetching from GitHub… this page asks again on its own."})
+        self.wait_refresh()
+        blocks = self.page()
+        self.assertEqual(blocks[0]["items"], [
+            {"label": "Wait on your review", "value": "1", "tone": "warn"}, {"label": "Your pull requests", "value": "2"},
+            {"label": "Failing CI runs", "value": "2", "tone": "alert"}, {"label": "Issues for you", "value": "2"}])
+        lists = [(b["title"], [i["title"] for i in b["items"]]) for b in blocks if b["type"] == "list"]
+        self.assertEqual([t for t, _ in lists], ["Waiting on your review", "Your pull requests", "Failing CI runs this week",
+                                                 "Issues assigned to you"])
+        self.assertEqual(lists[0][1], ["Please look"])
+        self.assertEqual(blocks[-1], {"type": "buttons", "actions": [{"type": "run", "command": "refresh", "title": "Refresh now"}]})
+
+    def test_bar_is_quiet_until_something_needs_you_then_red_ci_first(self):
+        self.assertEqual(self.bar()["text"], "", "nothing fetched yet: the item hides")
+        self.wait_refresh()
+        bar = self.bar()
+        self.assertEqual((bar["text"], bar["tone"]), ("CI 2 red", "alert"))
+        self.assertEqual([b["title"] for b in bar["blocks"]], ["Failing CI runs", "Waiting on your review"])
+        calls = len(self.gh_calls())
+        self.bar()
+        self.assertEqual(len(self.gh_calls()), calls, "a bar item within ten minutes asks GitHub nothing")
+
     def test_issues_assigned_to_you(self):
         self.warm()
         items = self.items("issues")

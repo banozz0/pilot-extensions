@@ -149,3 +149,17 @@ class GhostexTests(ExtensionTestCase):
         self.fixture.write_text(json.dumps({"ok": True, "sessions": []}))
         items = self.items()
         self.assertEqual([i["title"] for i in items], ["No Ghostex sessions"])
+
+    def test_page_counts_states_then_lists_each_project_with_its_actions(self):
+        blocks = self.page()
+        self.assertEqual(blocks[0]["items"], [
+            {"label": "Ask you something", "value": "1", "tone": "warn"}, {"label": "Working", "value": "2", "tone": "fine"},
+            {"label": "Idle", "value": "1"}, {"label": "Asleep", "value": "2"}])
+        lists = [(b["title"], [i["title"] for i in b["items"]]) for b in blocks[1:]]
+        self.assertEqual(lists, [("agents", ["Needs an answer", "Busy build"]), ("pilot", ["Design pass", "Idle one", "Asleep long ago", "Parked"]),
+                                 ("dotfiles", ["old-terminal"])])
+        self.assertEqual(self.box.shim_calls(), ["ghostex sessions --json --full"])
+
+    def test_page_says_why_ghostex_is_not_there(self):
+        self.fake_ghostex(sessions_body='echo "Error: gxserver is not running" >&2; exit 1')
+        self.assertEqual(self.page(), [{"type": "markdown", "text": "Ghostex sessions are not available: Error: gxserver is not running"}])
