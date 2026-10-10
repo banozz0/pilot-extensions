@@ -193,7 +193,7 @@
       "id": "ghostex",
       "title": "Ghostex sessions",
       "icon": "👻",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "description": "See which Ghostex agents are working or waiting on you from the menu bar, read a session's chat and reply to it, and rename, tag, sleep, wake or close sessions without opening Ghostex.",
       "examples": [
         "The menu bar shows 👻 5: click it, pick Pilot coordinator 2, read its last replies and type an answer; Return queues it until the agent stops, Option+Return interrupts",
@@ -219,27 +219,27 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "585802718bfa349ba9a1c7f169ffb3293bfa6441bd5a4bd55aab3f8cdd206292",
+          "sha256": "ec19583b7cba4a4e5a843bda15de4ac58903e889d369cb682c1b30eca22c087e",
           "size": 2130,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "a55aa66b7ab861629346e17d04c74bf0021851347a3ef5cdf15d3103424c1c21",
-          "size": 29149,
+          "sha256": "882e5ee459982b04b8e751484f75df942d1bdd7bc216dfcf67294b98bc5be803",
+          "size": 30013,
           "executable": true
         }
       ]
     },
     {
       "id": "git",
-      "title": "Git",
+      "title": "lazygit",
       "icon": "🌿",
-      "version": "1.0.0",
-      "description": "See which of your git repos have changes to commit or commits to push or pull, and pull, push or open lazygit in one click.",
+      "version": "1.1.0",
+      "description": "See which of your git repos have changes to commit or commits to push or pull; click one to open lazygit in it, or pull or push in one click.",
       "examples": [
         "The menu bar shows ⎇ 2: click it to see pilot with 3 changed files and agents with 2 commits to push, then Push",
-        "Type pil: pilot with its branch and changes; Return opens it in Ghostty, Cmd+K lazygit, Finder or its GitHub page"
+        "Type pil: pilot with its branch and changes; Return opens lazygit in it, Cmd+K Ghostty, Finder or its GitHub page"
       ],
       "requires": [
         "python3",
@@ -248,7 +248,7 @@
       "commands": [
         {
           "name": "repos",
-          "title": "Git repos",
+          "title": "lazygit repos",
           "mode": "list"
         }
       ],
@@ -265,14 +265,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "24f5e3d8b4209f5fadc88a512c3818e9477dbf8f416c1f27ee6f605d2e4fd339",
-          "size": 1997,
+          "sha256": "378192b4d5d319fc608311d854cfc0594e6fa9c4a5c9f7bb594f11ffce4bd5c7",
+          "size": 2031,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "ffc63f25e0e3356e0570ee0e4c008be8bf4127a8a49558be08bc8d438bbe4f64",
-          "size": 28735,
+          "sha256": "b436e14ee191e2742460aa84f0b6e94ae549cdff0d8acb3769eaacbe3b4dbc7f",
+          "size": 28906,
           "executable": true
         }
       ]

@@ -8,8 +8,8 @@ under a deadline inside Pilot's limits and never cached. A session is named to t
 checked against REF, so a context can never say `all` and nothing ever acts on more than that one session; free text
 (a reply, a title, a tag) always goes as `--flag=value`, so it can never read as a flag or as --help.
 
-A row pushes its chat: `read-session-chat <ref> --limit 60 --json`, folded to the last six messages, tool work in one
-grey line, asked again every 2 s while it shows. When the same chat was read under LONG_POLL_WINDOW s ago (so it is
+A row pushes its chat: `read-session-chat <ref> --limit 200 --json`, folded to the last six messages, tool work in one
+grey line, Sven's own last message always first among them, asked again every 2 s while it shows. When the same chat was read under LONG_POLL_WINDOW s ago (so it is
 Pilot asking again, not a first open) the read long-polls with `--wait-ms` and the last fingerprint, so a change shows
 at once. A reply comes in as the run message's `input`: Return queues it until the agent stops
 (`queue-session-chat-prompt`) or sends it at once to an agent that is not working, Option+Return interrupts a working
@@ -32,7 +32,7 @@ STARTED = time.monotonic()
 BUDGET = {"popover": 3.5, "page": 3.5}  # seconds for the session list; a list or bar gets DEFAULT_BUDGET
 DEFAULT_BUDGET = 1.2  # Pilot stops a list or a bar at 2 s; the CLI answers in about 0.2 s
 ACTION_TIMEOUT = 20
-CHAT_ROWS = 60  # transcript rows read, enough for six messages between tool calls
+CHAT_ROWS = 200  # transcript rows read, enough to reach Sven's last message past a long run of tool calls (about 0.1 s)
 CHAT_MESSAGES = 6
 CHAT_REFRESH = 2
 LONG_POLL_MS = 2000
@@ -396,7 +396,8 @@ def short(text):
 def fold(rows):
     """Transcript rows → chat messages: user and assistant text as they are, every run of tool calls (and harness
     rows: task notifications, reminders) as one tool line, "ran Bash" or "ran 3 tools"; the last CHAT_MESSAGES user
-    or assistant messages and the tool lines among and after them."""
+    or assistant messages and the tool lines among and after them. When the user's last message is older than those, it
+    leads them, then one grey line saying how many messages came between."""
     out, tools = [], []
 
     def flush():
@@ -427,7 +428,15 @@ def fold(rows):
                          if isinstance(b, dict) and b.get("type") == "tool-call")
     flush()
     spoken = [i for i, m in enumerate(out) if m["role"] != "tool"]
-    return out[spoken[-CHAT_MESSAGES]:] if len(spoken) >= CHAT_MESSAGES else out
+    if len(spoken) < CHAT_MESSAGES:
+        return out
+    user = next((n for n in range(len(spoken) - 1, -1, -1) if out[spoken[n]]["role"] == "user"), None)
+    if user is None or user >= len(spoken) - CHAT_MESSAGES:
+        return out[spoken[-CHAT_MESSAGES]:]
+    between = len(spoken) - CHAT_MESSAGES - user  # spoken messages after the user's, before the last five
+    # Never next to a tool line: Pilot folds tool lines in a row into one "ran N tools".
+    gap = [{"role": "tool", "text": "%d more %s" % (between, "message" if between == 1 else "messages")}] if between else []
+    return [out[spoken[user]]] + gap + out[spoken[-(CHAT_MESSAGES - 1)]:]
 
 
 def cache_file(run):
@@ -495,14 +504,14 @@ def chat(run):
     else:
         send_context = {"ref": ref, "title": title}
         blocks.append({"type": "input", "placeholder": ("Reply wakes %s…" if state == "asleep" else "Reply to %s…") % title,
-                       "action": {"type": "run", "command": "send", "title": "Send", "context": send_context},
+                       # Pilot's hint under the box reads the titles: "↩ Queue · ⌥↩ Interrupt and send" while it works.
+                       "action": {"type": "run", "command": "send", "title": "Queue" if state in ("working", "question") else "Send",
+                                  "context": send_context},
                        "alt": {"type": "run", "command": "send", "title": "Interrupt and send",
                                "context": dict(send_context, interrupt=True)}})
         queued = session.get("queuedPromptCount") if session else 0
-        hint = "↩ sends · while it works, your reply waits for its turn to end · ⌥↩ interrupts instead"
         if queued:
-            hint += " · %d waiting in its queue" % queued
-        blocks.append({"type": "markdown", "text": hint})
+            blocks.append({"type": "markdown", "text": "%d waiting in its queue" % queued})
     buttons = [{"type": "run", "command": "focus", "title": "Open in Ghostex", "context": {"ref": ref, "wake": state == "asleep"}}]
     switch = toggle(ref, state, allowed_of(session)) if session else None
     blocks.append({"type": "buttons", "actions": buttons + ([switch] if switch else [])})

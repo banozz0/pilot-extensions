@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Git for Pilot: every repo under the repos folder with its branch, uncommitted changes and commits to push or pull,
+"""lazygit for Pilot (the extension id stays git): every repo under the repos folder with its branch, uncommitted changes and commits to push or pull,
 in Hyper+Space, a menu-bar item with a popover, and a page (Surfaces v2, Pilot story 165).
 
 State comes from `git --no-optional-locks status --porcelain=v2 --branch`, eight repos at a time under a deadline that
@@ -11,7 +11,8 @@ Fetching asks the remotes, so it runs only when the popover or the page opens an
 or more, or on Fetch all; never from the bar command, never on a timer. It runs as `main.py --fetch`, a detached child
 (its own session, output to nowhere) fetching four repos at a time, while a lock held with flock keeps two from
 overlapping; the view asks again every 2 s until it ends. Pull is `git pull --ff-only`; push runs only when ahead of an
-upstream; anything harder (diverged, conflicts, commits) goes to lazygit.
+upstream; anything harder (diverged, conflicts, commits) goes to lazygit, which a row opens in Pilot's terminal (Open in
+<terminal> when lazygit is not installed).
 """
 import fcntl
 import functools
@@ -365,22 +366,19 @@ def summary(state, page=False, now=None):
 
 
 def row(repo, root, state, terminal_name, lazygit, page=False, now=None):
-    """One repo as a list item: badges and inline buttons (Surfaces v2), and every action in `actions` too, so an older
-    Pilot reaches them through ⋯."""
+    """One repo as a list item: a click opens lazygit there (its terminal when lazygit is not installed); badges and
+    inline Pull and Push (Surfaces v2), and every action in `actions` too, so an older Pilot reaches them through ⋯."""
     name = os.path.relpath(repo, root) if repo != root else os.path.basename(repo)
     context = {"path": repo}
     diverged = bool(state and state["ahead"] and state["behind"])
     synced = bool(state and state["upstream"] and not state["gone"] and not diverged)
     pull = {"type": "run", "command": "pull", "title": "Pull", "icon": "arrow.down", "context": context}
     push = {"type": "run", "command": "push", "title": "Push", "icon": "arrow.up", "context": context}
-    lazy = {"type": "run", "command": "lazygit", "title": "lazygit", "icon": "terminal", "context": context}
     inline = []
     if synced and state["behind"]:
         inline.append(pull)
     if synced and state["ahead"]:
         inline.append(push)
-    if lazygit:
-        inline.append(lazy)
     badges = []
     if state:
         sync_tone = {"tone": "alert"} if diverged else {}
@@ -392,7 +390,8 @@ def row(repo, root, state, terminal_name, lazygit, page=False, now=None):
             badges.append(dict({"text": "↓%d" % state["behind"]}, **sync_tone))
     found = remotes(git_dirs(repo)[1])
     url = web_url(found.get("origin") or next(iter(found.values()), None))
-    actions = [{"type": "run", "command": "open-terminal", "title": "Open in %s" % terminal_name, "context": context}]
+    shell = {"type": "run", "command": "open-terminal", "title": "Open in %s" % terminal_name, "context": context}
+    actions = [{"type": "run", "command": "lazygit", "title": "lazygit", "context": context}, shell] if lazygit else [shell]
     actions += inline
     actions.append({"type": "open", "url": repo, "title": "Open in Finder"})
     if url:

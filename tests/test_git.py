@@ -91,25 +91,28 @@ class GitTests(ExtensionTestCase):
         self.assertEqual(bar["text"], "")
         self.assertNotIn("tone", bar)
 
-    def test_popover_rows_carry_badges_inline_buttons_and_every_action_in_actions(self):
+    def test_popover_rows_open_lazygit_and_carry_badges_inline_buttons_and_every_action_in_actions(self):
         self.box.shim("lazygit")
         rows = self.rows(self.popover(home=self.box.home))
         self.assertEqual(rows["changed"]["subtitle"], "main · 1 changed")
         self.assertEqual(rows["changed"]["badges"], [{"text": "●1", "tone": "warn"}])
-        self.assertEqual([a["title"] for a in rows["changed"]["inline"]], ["lazygit"])
+        self.assertNotIn("inline", rows["changed"])
         self.assertEqual(rows["ahead"]["badges"], [{"text": "↑1"}])
-        self.assertEqual([a["title"] for a in rows["ahead"]["inline"]], ["Push", "lazygit"])
+        self.assertEqual([a["title"] for a in rows["ahead"]["inline"]], ["Push"])
         self.assertEqual(rows["behind"]["subtitle"], "main · 1 behind")
-        self.assertEqual([a["title"] for a in rows["behind"]["inline"]], ["Pull", "lazygit"])
+        self.assertEqual([a["title"] for a in rows["behind"]["inline"]], ["Pull"])
         self.assertEqual(rows["behind"]["inline"][0], {"type": "run", "command": "pull", "title": "Pull",
                                                        "icon": "arrow.down", "context": {"path": self.path("behind")}})
         self.assertIn("diverged (1 to push, 1 behind)", rows["diverged"]["subtitle"])
         self.assertEqual([b["tone"] for b in rows["diverged"]["badges"]], ["alert", "alert"])
-        self.assertEqual([a["title"] for a in rows["diverged"]["inline"]], ["lazygit"])
+        self.assertNotIn("inline", rows["diverged"])
         for title in ("changed", "ahead", "behind", "diverged"):
             actions = rows[title]["actions"]
-            self.assertTrue(actions[0]["title"].startswith("Open in "))
-            for button in rows[title]["inline"]:
+            # A click on the row opens lazygit there; a plain terminal is the next action.
+            self.assertEqual(actions[0], {"type": "run", "command": "lazygit", "title": "lazygit",
+                                          "context": {"path": self.path(title)}})
+            self.assertTrue(actions[1]["title"].startswith("Open in "))
+            for button in rows[title].get("inline", []):
                 self.assertIn(button, actions, "%s: %s only inline" % (title, button["title"]))
             self.assertEqual([a["title"] for a in actions[-2:]], ["Open in Finder", "Copy path"])
 
@@ -235,6 +238,6 @@ class GitTests(ExtensionTestCase):
         git("remote", "add", "github", "git@github.com:someone/local.git", cwd=self.code / "local")
         rows = self.rows(self.blocks("clean", "popover", home=self.box.home, pilot={"terminal": "com.apple.Terminal"}))
         titles = [a["title"] for a in rows["local"]["actions"]]
-        self.assertEqual(titles[0], "Open in Terminal")
+        self.assertIn("Open in Terminal", titles[:2])  # second when this Mac has lazygit
         self.assertEqual(titles[-3:], ["Open in Finder", "Open on GitHub", "Copy path"])
         self.assertEqual(rows["local"]["actions"][-2]["url"], "https://github.com/someone/local")

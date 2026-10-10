@@ -290,27 +290,39 @@ class GhostexTests(ExtensionTestCase):
         self.assertTrue(messages[1]["text"].endswith("*from Pilot coordinator 3*"))
         self.assertEqual(len(messages[8]["text"]), 1500)
         self.assertEqual(messages[0]["at"], 101)
-        self.assertEqual(self.calls()[-1], ["read-session-chat", "S1:P2:G3", "--limit", "60", "--json"])
+        self.assertEqual(self.calls()[-1], ["read-session-chat", "S1:P2:G3", "--limit", "200", "--json"])
+
+    def test_chat_keeps_the_users_last_message_past_a_long_run_of_answers(self):
+        answers = []
+        for n in range(8):
+            answers += [row("assistant", text("step %d" % n), call("Bash"), at=120 + 2 * n), row("tool", RESULT, at=121 + 2 * n)]
+        self.fake("read-session-chat", dict(CHAT, messages=CHAT["messages"] + answers))
+        messages = self.chat()[0]["messages"]
+        self.assertEqual([(m["role"], m["text"]) for m in messages[:4]], [
+            ("user", "go on"), ("tool", "4 more messages"), ("assistant", "step 3"), ("tool", "ran Bash")])
+        self.assertEqual([m["text"] for m in messages if m["role"] == "assistant"], ["step %d" % n for n in range(3, 8)])
 
     def test_chat_has_a_reply_box_return_queues_option_return_interrupts(self):
         blocks = self.chat()
         box = blocks[1]
         self.assertEqual(box["placeholder"], "Reply to Busy build…")
-        self.assertEqual(box["action"], {"type": "run", "command": "send", "title": "Send",
+        self.assertEqual(box["action"], {"type": "run", "command": "send", "title": "Queue",
                                          "context": {"ref": "S1:P2:G3", "title": "Busy build"}})
         self.assertEqual(box["alt"]["context"], {"ref": "S1:P2:G3", "title": "Busy build", "interrupt": True})
-        self.assertIn("2 waiting in its queue", blocks[2]["text"])
+        self.assertEqual(blocks[2], {"type": "markdown", "text": "2 waiting in its queue"})
         self.assertEqual([a["title"] for a in blocks[3]["actions"]], ["Open in Ghostex", "Sleep"])
         asleep = self.chat("S1:P1:G1")
         self.assertEqual(asleep[1]["placeholder"], "Reply wakes Asleep long ago…")
-        self.assertEqual([a["title"] for a in asleep[3]["actions"]], ["Open in Ghostex", "Wake"])
+        self.assertEqual(asleep[1]["action"]["title"], "Send")
+        # No queue, no line: Pilot draws the one hint under the box.
+        self.assertEqual([a["title"] for a in asleep[2]["actions"]], ["Open in Ghostex", "Wake"])
         self.assertEqual(self.writes(), [])
 
     def test_chat_asked_again_long_polls_with_the_last_fingerprint(self):
         self.chat()
         self.chat()
         reads = [c for c in self.calls() if c[0] == "read-session-chat"]
-        self.assertEqual(reads[1], ["read-session-chat", "S1:P2:G3", "--limit", "60", "--json", "--wait-ms", "2000",
+        self.assertEqual(reads[1], ["read-session-chat", "S1:P2:G3", "--limit", "200", "--json", "--wait-ms", "2000",
                                     "--fingerprint", "fp1"])
         cache = self.box.cache / "chat.json"
         reads_file = json.loads(cache.read_text())
