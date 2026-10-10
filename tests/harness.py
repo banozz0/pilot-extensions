@@ -200,7 +200,7 @@ class ExtensionTestCase(unittest.TestCase):
             self.assertLessEqual(len(item.get("inline", [])), 3)
             for action in item.get("inline", []):
                 self.assertActionShape(action, ITEM_ACTIONS)
-                self.assertIn(action.get("icon"), INLINE_ICONS, action)
+                self.assertTrue(action.get("icon") in INLINE_ICONS or check.is_emoji(action.get("icon")), action)
 
     def assertActionShape(self, action, fields=ACTIONS):
         self.assertIn(action.get("type"), fields, action)

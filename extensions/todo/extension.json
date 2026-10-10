@@ -1,0 +1,23 @@
+{
+  "id": "todo",
+  "title": "To-do",
+  "icon": "☑️",
+  "version": "1.0.0",
+  "description": "A plain to-do list in the menu bar: add one, tick it off, delete it. Kept on this Mac only, no account and no sync.",
+  "examples": ["The menu bar shows ☑️ 3: click it, type buy milk in Add a to-do and press Return; tick ⬜ when it is done", "Type todo, Return, then buy milk: Return on Add “buy milk” adds it"],
+  "runtime": "process",
+  "requires": ["python3"],
+  "permissions": {},
+  "surfaces": { "page": { "command": "page", "every": 60 }, "bar": { "command": "bar", "every": 60 } },
+  "commands": [
+    { "name": "todo", "title": "To-do", "mode": "list", "filter": "self", "run": "main.py" },
+    { "name": "bar", "title": "To-do in the menu bar", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "page", "title": "To-do page", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "done-list", "title": "Done to-dos", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "add", "title": "Add a to-do", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "done", "title": "Mark a to-do done", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "undone", "title": "Mark a to-do not done", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "delete", "title": "Delete a to-do", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "clear-done", "title": "Delete done to-dos", "mode": "no-view", "hidden": true, "run": "main.py" }
+  ]
+}

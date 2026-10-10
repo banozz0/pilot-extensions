@@ -536,6 +536,92 @@
           "executable": true
         }
       ]
+    },
+    {
+      "id": "todo",
+      "title": "To-do",
+      "icon": "☑️",
+      "version": "1.0.0",
+      "description": "A plain to-do list in the menu bar: add one, tick it off, delete it. Kept on this Mac only, no account and no sync.",
+      "examples": [
+        "The menu bar shows ☑️ 3: click it, type buy milk in Add a to-do and press Return; tick ⬜ when it is done",
+        "Type todo, Return, then buy milk: Return on Add “buy milk” adds it"
+      ],
+      "requires": [
+        "python3"
+      ],
+      "commands": [
+        {
+          "name": "todo",
+          "title": "To-do",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": false,
+        "files": [],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "08402629ca27f40018f927a5dca8d1febbb023fe28120e646a0c77e6b8f517fb",
+          "size": 1567,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "33cc19cb56456c66d3d1eb1ed7fc810d7f1b7d3560ebbbc7bbf29ed99b6505c1",
+          "size": 10312,
+          "executable": true
+        }
+      ]
+    },
+    {
+      "id": "weather",
+      "title": "Weather",
+      "icon": "🌤️",
+      "version": "1.0.0",
+      "description": "The temperature now in the menu bar; click it for feels like, high and low, rain chance, wind, the next hours and the next 7 days. Free data from Open-Meteo, no account or key.",
+      "examples": [
+        "The menu bar shows ☀️ 24°: click it for the next six hours and the week ahead",
+        "Type weather: now, the next hours and 7 days in one view; Cmd+K refreshes it"
+      ],
+      "requires": [
+        "python3",
+        "curl"
+      ],
+      "commands": [
+        {
+          "name": "weather",
+          "title": "Weather",
+          "mode": "detail"
+        }
+      ],
+      "permissions": {
+        "network": [
+          "api.open-meteo.com",
+          "geocoding-api.open-meteo.com"
+        ],
+        "clipboard": false,
+        "files": [],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "be6decb947ea411f396d73726be964b08b92890226d347a7385eff645bf33130",
+          "size": 1701,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "80140c87e66d06d3fd65bf3b561664f5b310d0229d4b7eed5373634a5f95ccf0",
+          "size": 21799,
+          "executable": true
+        }
+      ]
     }
   ]
 }
