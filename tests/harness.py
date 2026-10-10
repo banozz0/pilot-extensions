@@ -131,10 +131,11 @@ class Sandbox:
         return self.log.read_text().splitlines() if self.log.exists() else []
 
     def run(self, ext_id, command, query=None, context=None, preferences=None, home=None, timeout=None, folder=None,
-            surface=None, pilot=None):
+            surface=None, pilot=None, input=None):
         """Runs `command`, from `folder` when given (an installed copy), else from the repo; `surface` ("page" or "bar")
         runs it as that surface does (or "popover", a bar item's click), the surface named in the run message and its time
-        limit applied; `pilot` is Pilot's defaults in the run message (story 165: repos, terminal)."""
+        limit applied; `pilot` is Pilot's defaults in the run message (story 165: repos, terminal); `input` the text typed
+        in an input block or the answer to a run's ask (story 165)."""
         folder = Path(folder or EXTENSIONS / ext_id)
         m = manifest(ext_id, folder)
         spec = next(c for c in m["commands"] if c["name"] == command)
@@ -150,6 +151,8 @@ class Sandbox:
             message["surface"] = surface
         if pilot is not None:
             message["pilot"] = pilot
+        if input is not None:
+            message["input"] = input
         env = {"HOME": str(home or self.home), "USER": os.environ.get("USER", "sven"), "TMPDIR": str(self.tmp) + "/",
                "PATH": ":".join([str(program.parent), str(self.shims), SYSTEM_PATH]),
                "LANG": "en_US.UTF-8", "PILOT_EXTENSION_ID": ext_id}
@@ -202,18 +205,31 @@ class ExtensionTestCase(unittest.TestCase):
     def assertActionShape(self, action, fields=ACTIONS):
         self.assertIn(action.get("type"), fields, action)
         self.assertIn(fields[action["type"]], action, action)
+        if "ask" in action:  # story 165: only a run asks; text, up to 8 choices, or a confirm
+            self.assertEqual(action["type"], "run", action)
+            ask = action["ask"]
+            self.assertEqual(len(ask), 1, ask)
+            if "choices" in ask:
+                self.assertTrue(1 <= len(ask["choices"]) <= 8, ask)
+                for choice in ask["choices"]:
+                    self.assertIsInstance(choice.get("title"), str)
+                    self.assertIsInstance(choice.get("value"), str)
+            else:
+                self.assertIsInstance(ask.get("text", ask.get("confirm")), str, ask)
         if action["type"] in ("run", "push"):
             names = {c["name"]: c for c in manifest(self.EXTENSION)["commands"]}
             self.assertIn(action["command"], names, "names a command the extension lacks")
             wanted = "no-view" if action["type"] == "run" else ("list", "detail", "no-view")  # a push in a popover: 165
             self.assertIn(names[action["command"]]["mode"], wanted, action)
 
-    BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons", "section"}
+    BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons", "section", "chat", "input"}
+    ROLES = ("user", "assistant", "tool")
     TONES = (None, "fine", "warn", "alert")
 
     def assertBlocksShape(self, blocks, types=BLOCK_TYPES):
         """Every block as Pilot decodes it (stories 161 and 165): a known type with its fields; a list's items and the
-        buttons' actions as an item's; a section's blocks one level deep, a meter's resetsAt seconds since 1970."""
+        buttons' actions as an item's; a section's blocks one level deep, a meter's resetsAt seconds since 1970; a chat's
+        messages (20 at most), an input's run actions."""
         self.assertIsInstance(blocks, list)
         for block in blocks:
             self.assertIn(block.get("type"), types, block)
@@ -238,6 +254,20 @@ class ExtensionTestCase(unittest.TestCase):
                 self.assertItemShape(block["items"])
             elif kind == "markdown":
                 self.assertIsInstance(block.get("text"), str)
+            elif kind == "chat":
+                self.assertIsInstance(block.get("working", False), bool)
+                self.assertLessEqual(len(block["messages"]), 20)
+                for message in block["messages"]:
+                    self.assertIn(message.get("role"), self.ROLES)
+                    self.assertIsInstance(message.get("text"), str)
+                    if "at" in message:
+                        self.assertIsInstance(message["at"], (int, float))
+            elif kind == "input":
+                self.assertIsInstance(block.get("placeholder", ""), str)
+                for key in ("action", "alt"):
+                    if key in block or key == "action":
+                        self.assertEqual(block[key]["type"], "run", block)  # only a run takes typed text
+                        self.assertActionShape(block[key], ITEM_ACTIONS)
             else:
                 self.assertTrue(block["actions"])
                 for action in block["actions"]:
@@ -252,13 +282,18 @@ class ExtensionTestCase(unittest.TestCase):
             self.assertTrue(all(0 <= m <= 100 for m in gauge["meters"]), gauge)
             self.assertIn(gauge.get("tone"), self.TONES)
 
-    def blocks(self, command, surface, **kwargs):
-        """One blocks message, its shape checked: a page's, or a bar command's popover (story 165)."""
+    def blocks_message(self, command, surface, **kwargs):
+        """One blocks message, its shape checked: a page's, or a bar command's popover (story 165), with its refresh."""
         result = self.run_ext(command, surface=surface, **kwargs)
         found = result.of_type("blocks")
         self.assertEqual(len(found), 1, result.stdout)
         self.assertBlocksShape(found[0]["blocks"])
-        return found[0]["blocks"]
+        if "refresh" in found[0]:
+            self.assertTrue(2 <= found[0]["refresh"] <= 60, found[0])
+        return found[0]
+
+    def blocks(self, command, surface, **kwargs):
+        return self.blocks_message(command, surface, **kwargs)["blocks"]
 
     def page(self, **kwargs):
         return self.blocks("page", "page", **kwargs)

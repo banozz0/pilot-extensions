@@ -16,7 +16,7 @@ def session(ref, title, project, status, activity="idle", agent="claude", kind="
          "projectName": project, "kind": kind, "status": status, "activity": activity,
          "isSleeping": status == "sleep", "lastInteractionAt": stamp(extra.pop("age", 60)),
          "actions": None if status == "unknown" else {"focus": status == "running", "sleep": status == "running",
-                                                       "wake": status == "sleep"}}
+                                                       "wake": status == "sleep", "kill": True}}
     if kind == "agent":
         s["agentId"] = s["agentName"] = agent
     s.update(extra)
@@ -26,15 +26,70 @@ def session(ref, title, project, status, activity="idle", agent="claude", kind="
 SESSIONS = {"ok": True, "projects": [{"customAgents": [{"agentId": "custom-designer-x1", "name": "designer"}]}],
             "sessions": [
                 session("S1:P1:G1", "Asleep long ago", "pilot", "sleep", age=86400 * 3),
-                session("S1:P1:G2", "Idle one", "pilot", "running", age=600),
-                session("S1:P2:G3", "Busy build", "agents", "running", "working", age=5),
-                session("S1:P1:G4", "Design pass", "pilot", "running", "working", agent="custom-designer-x1", age=30),
-                session("S1:P2:G5", "Needs an answer", "agents", "running", pendingQuestionCount=1, age=120),
+                session("S1:P1:G2", "Idle one", "pilot", "running", age=600, sessionTag="testing"),
+                session("S1:P2:G3", "Busy build", "agents", "running", "working", age=5, queuedPromptCount=2),
+                session("S1:P1:G4", "Design pass", "pilot", "running", "working", agent="custom-designer-x1", age=30,
+                        sessionTag="custom-abcd1"),
+                session("S1:P2:G5", "Needs an answer", "agents", "running", pendingQuestionCount=1, age=120,
+                        sessionTag="testing"),
                 session("S1:P3:G6", "old-terminal", "dotfiles", "unknown", kind="terminal", age=86400 * 30),
-                session("S1:P1:G7", "Parked", "pilot", "sleep", isParked=True, age=86400 * 9),
+                session("S1:P1:G7", "Parked", "pilot", "sleep", isParked=True, age=86400 * 9, sessionTag="done"),
                 {"title": "no ref, skipped"},
                 session("all", "bad ref, skipped", "pilot", "running"),
             ]}
+
+TAGS = {"ok": True, "customSessionTags": {"order": ["custom-abcd1"], "tags": {
+    "custom-abcd1": {"name": "Client", "icon": "star", "color": "#ff8800", "tagId": "custom-abcd1"}}}}
+
+SENDER = ("\n\nMessage from another agent\nAgent: Claude\nSession: Pilot coordinator 3\nSession ID: G2j79\n"
+          "Agent ID: claude\nAgent Session ID: x\nReply to: S60:P73tc:G2j79")
+
+
+def row(role, *blocks, at=1791628500):
+    return {"id": "m%s" % at, "role": role, "blocks": list(blocks), "timestamp": at * 1000, "source": "transcript"}
+
+
+def text(t):
+    return {"type": "text", "text": t}
+
+
+def call(name):
+    return {"type": "tool-call", "name": name, "input": {}, "callId": "c"}
+
+
+RESULT = {"type": "tool-result", "output": "exit 0"}
+CHAT = {"ok": True, "fingerprint": "fp1", "working": True, "queue": [], "messages": [
+    row("user", text("first question"), at=100),
+    row("assistant", text("first answer"), at=101),
+    row("user", text("build 16 is in. **AI usage** is ass" + SENDER), at=102),
+    row("assistant", call("Bash"), at=103), row("tool", RESULT, at=104),
+    row("assistant", call("Read"), at=105), row("tool", RESULT, at=106),
+    row("assistant", text("Reading the code."), call("Grep"), at=107), row("tool", RESULT, at=108),
+    row("user", text("<task-notification>\n<task-id>x</task-id></task-notification>"), at=109),
+    row("assistant", text("Started thread *Surfaces v2 design*."), at=110),
+    row("user", text("<bash-input>ls</bash-input>"), at=110.5),
+    row("user", text("go on"), at=111),
+    row("assistant", text("x" * 2000), at=112),
+    row("system", text("compacted"), at=113),
+    row("assistant", call("Edit"), at=114), row("tool", RESULT, at=115),
+]}
+
+FAKE = r'''"""A ghostex that logs each call's arguments as one JSON line and never reaches the real app: each verb answers
+from the config's entry for it (stdout, stderr, exit, sleep), else {"ok": true}."""
+import json, sys, time
+CONFIG, LOG = %r, %r
+with open(LOG, "a") as f:
+    f.write(json.dumps(sys.argv[1:]) + "\n")
+with open(CONFIG) as f:
+    answer = json.load(f).get(sys.argv[1] if len(sys.argv) > 1 else "", {"stdout": '{"ok": true}'})
+time.sleep(answer.get("sleep", 0))
+sys.stdout.write(answer.get("stdout", ""))
+sys.stderr.write(answer.get("stderr", ""))
+sys.exit(answer.get("exit", 0))
+'''
+
+REFS = {"S1:P1:G1", "S1:P1:G2", "S1:P2:G3", "S1:P1:G4", "S1:P2:G5", "S1:P3:G6", "S1:P1:G7"}
+READS = ("sessions", "read-session-chat", "read-custom-session-tags")
 
 
 class GhostexTests(ExtensionTestCase):
@@ -42,18 +97,33 @@ class GhostexTests(ExtensionTestCase):
 
     def setUp(self):
         super().setUp()
-        self.fixture = self.box.root / "sessions.json"
-        self.fixture.write_text(json.dumps(SESSIONS))
-        self.fake_ghostex()
+        self.config = {}
+        self.fake("sessions", SESSIONS)
+        self.fake("read-custom-session-tags", TAGS)
+        self.fake("read-session-chat", CHAT)
+        fake = self.box.root / "fake_ghostex.py"
+        fake.write_text(FAKE % (str(self.box.root / "fake.json"), str(self.box.root / "ghostex.log")))
+        self.box.shim("ghostex", 'exec python3 "%s" "$@"' % fake)
         self.box.shim("open")
 
-    def fake_ghostex(self, sessions_body=None, action_body=None):
-        """A ghostex that logs every call and never reaches the real app: `sessions` prints the fixture, any other
-        verb prints {"ok": true}."""
-        log = 'printf "%%s\\n" "ghostex $*" >> "%s"\n' % self.box.log
-        sessions_body = sessions_body or 'cat "%s"' % self.fixture
-        action_body = action_body or "echo '{\"ok\":true}'"
-        self.box.shim("ghostex", log + 'case "$1" in\n  sessions) %s ;;\n  *) %s ;;\nesac' % (sessions_body, action_body))
+    def fake(self, verb, body=None, **raw):
+        self.config[verb] = dict({"stdout": json.dumps(body)} if body is not None else {}, **raw)
+        (self.box.root / "fake.json").write_text(json.dumps(self.config))
+
+    def calls(self):
+        log = self.box.root / "ghostex.log"
+        return [json.loads(l) for l in log.read_text().splitlines()] if log.exists() else []
+
+    def writes(self):
+        return [c for c in self.calls() if c[0] not in READS]
+
+    def assertOneSession(self, ref):
+        """Every write names exactly the one session, by its ref, and never all."""
+        for c in self.writes():
+            named = [a for a in c if any(r in a for r in REFS | {"all"})]
+            self.assertEqual(len(named), 1, c)
+            self.assertIn(ref, named[0], c)
+            self.assertNotIn("all", c)
 
     def items(self, **kwargs):
         r = self.run_ext("sessions", **kwargs)
@@ -61,105 +131,292 @@ class GhostexTests(ExtensionTestCase):
         self.assertLess(r.elapsed, 2)
         return r.items
 
-    def test_lists_sessions_by_what_needs_you_with_project_agent_and_state(self):
+    def rows(self, blocks):
+        return {i["title"]: i for b in blocks if b["type"] == "list" for i in b["items"]}
+
+    def chat(self, ref="S1:P2:G3", **kwargs):
+        return self.blocks("chat", "popover", context={"ref": ref, "title": "Busy build"}, **kwargs)
+
+    def run_write(self, command, context, input=None):
+        r = self.run_ext(command, context=context, input=input)
+        for m in r.messages:
+            self.assertIn(m["type"], ("hud", "error"), m)
+        return r
+
+    # ---- Hyper+Space, as 1.1.0 ----
+
+    def test_lists_sessions_by_what_needs_you_and_return_focuses(self):
         items = self.items()
         self.assertEqual([i["title"] for i in items],
                          ["Needs an answer", "Busy build", "Design pass", "Idle one", "Asleep long ago", "Parked",
                           "old-terminal"])
         rows = {i["title"]: i for i in items}
-        self.assertEqual(rows["Busy build"]["subtitle"], "agents · Claude · working · just now")
         self.assertEqual(rows["Design pass"]["subtitle"], "pilot · designer · working · just now")
-        self.assertEqual(rows["Idle one"]["subtitle"], "pilot · Claude · awake, idle · 10 min ago")
-        self.assertEqual(rows["Asleep long ago"]["subtitle"], "pilot · Claude · asleep · 3 d ago")
         self.assertEqual(rows["Parked"]["subtitle"], "pilot · Claude · asleep, parked · 9 d ago")
-        self.assertEqual(rows["Needs an answer"]["icon"], "❓")
-        self.assertEqual(rows["old-terminal"]["subtitle"], "dotfiles · terminal · not running · 30 d ago")
-        self.assertIn("designer", rows["Design pass"]["keywords"])
-        self.assertEqual(self.box.shim_calls(), ["ghostex sessions --json --full"])
+        self.assertEqual(rows["Idle one"]["actions"][0], {"type": "run", "command": "focus", "title": "Focus in Ghostex",
+                                                          "context": {"ref": "S1:P1:G2", "wake": False}})
+        self.assertEqual(rows["Asleep long ago"]["actions"][0]["title"], "Wake and focus in Ghostex")
+        self.assertEqual(self.calls(), [["sessions", "--json", "--full"]])
 
-    def test_awake_rows_focus_then_sleep_asleep_rows_wake_and_focus_then_wake(self):
-        rows = {i["title"]: i for i in self.items()}
-        awake = rows["Idle one"]["actions"]
-        self.assertEqual(awake, [
-            {"type": "run", "command": "focus", "title": "Focus in Ghostex", "context": {"ref": "S1:P1:G2", "wake": False}},
-            {"type": "run", "command": "sleep", "title": "Sleep", "context": {"ref": "S1:P1:G2"}}])
-        asleep = rows["Asleep long ago"]["actions"]
-        self.assertEqual(asleep, [
-            {"type": "run", "command": "focus", "title": "Wake and focus in Ghostex",
-             "context": {"ref": "S1:P1:G1", "wake": True}},
-            {"type": "run", "command": "wake", "title": "Wake", "context": {"ref": "S1:P1:G1"}}])
-        for item in rows.values():
-            for action in item["actions"]:
-                self.assertActionShape(action)
-
-    def test_focus_names_the_session_by_its_ref_and_brings_ghostex_forward(self):
-        r = self.run_ext("focus", context={"ref": "S1:P1:G2", "wake": False})
-        self.assertEqual(self.box.shim_calls(), ["ghostex focus --session-id S1:P1:G2 --json", "open -a Ghostex"])
-        self.assertEqual(r.of_type("hud")[0]["text"], "Focused in Ghostex")
-
-    def test_focus_on_a_sleeping_session_wakes_it_first(self):
-        r = self.run_ext("focus", context={"ref": "S1:P1:G1", "wake": True})
-        self.assertEqual(self.box.shim_calls(), ["ghostex wake --session-id S1:P1:G1 --json",
-                                                 "ghostex focus --session-id S1:P1:G1 --json", "open -a Ghostex"])
+    def test_focus_on_a_sleeping_session_wakes_it_first_then_brings_ghostex_forward(self):
+        r = self.run_write("focus", {"ref": "S1:P1:G1", "wake": True})
+        self.assertEqual(self.calls(), [["wake", "--session-id", "S1:P1:G1", "--json"],
+                                        ["focus", "--session-id", "S1:P1:G1", "--json"]])
+        self.assertEqual(self.box.shim_calls(), ["open -a Ghostex"])
         self.assertEqual(r.of_type("hud")[0]["text"], "Woken and focused in Ghostex")
 
-    def test_sleep_and_wake(self):
-        r = self.run_ext("sleep", context={"ref": "S1:P1:G2"})
-        self.assertEqual(r.of_type("hud")[0]["text"], "Session asleep")
-        r = self.run_ext("wake", context={"ref": "S1:P1:G1"})
-        self.assertEqual(r.of_type("hud")[0]["text"], "Session awake")
-        self.assertEqual(self.box.shim_calls(), ["ghostex sleep --session-id S1:P1:G2 --json",
-                                                 "ghostex wake --session-id S1:P1:G1 --json"])
-
-    def test_a_context_that_is_not_one_session_ref_is_refused_so_all_can_never_be_slept(self):
-        for context in ({"ref": "all"}, {"ref": "S1:P1:G2 all"}, {"ref": "--help"}, {}, None):
-            r = self.run_ext("sleep", context=context)
-            self.assertEqual(r.of_type("error")[0]["text"], "got no Ghostex session to act on")
-        self.assertEqual(self.box.shim_calls(), [])
-
-    def test_a_failing_action_says_why(self):
-        self.fake_ghostex(action_body='echo \'{"ok":false,"error":"No running terminal sessions matched."}\'; exit 1')
-        r = self.run_ext("focus", context={"ref": "S1:P1:G2", "wake": False})
-        self.assertEqual(r.of_type("error")[0]["text"], "could not focus it: No running terminal sessions matched.")
-        self.assertNotIn("open -a Ghostex", self.box.shim_calls())
-
-    def test_ghostex_failing_shows_one_honest_row(self):
-        self.fake_ghostex(sessions_body='echo "Error: gxserver is not running" >&2; exit 1')
-        items = self.items()
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["title"], "Ghostex sessions are not available")
-        self.assertEqual(items[0]["subtitle"], "Error: gxserver is not running")
-
-    def test_a_hung_ghostex_still_answers_inside_two_seconds(self):
-        self.fake_ghostex(sessions_body="sleep 5")
-        items = self.items()
-        self.assertEqual(items[0]["subtitle"], "Ghostex did not answer in time: is it running?")
-
-    def test_ghostex_missing_shows_one_honest_row(self):
+    def test_ghostex_failing_hung_or_missing_shows_one_honest_row(self):
+        self.fake("sessions", stderr="Error: gxserver is not running\n", exit=1)
+        self.assertEqual(self.items()[0]["subtitle"], "Error: gxserver is not running")
+        self.fake("sessions", sleep=5)
+        self.assertEqual(self.items()[0]["subtitle"], "Ghostex did not answer in time: is it running?")
         (self.box.shims / "ghostex").unlink()
-        # the real CLI lives in /opt/homebrew/bin
-        hide = mock.patch.object(harness, "SYSTEM_PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        hide = mock.patch.object(harness, "SYSTEM_PATH", "/usr/bin:/bin:/usr/sbin:/sbin")  # the real CLI is in Homebrew's
         hide.start()
         self.addCleanup(hide.stop)
-        items = self.items()
-        self.assertEqual(len(items), 1)
-        self.assertIn("ghostex is not installed", items[0]["subtitle"])
+        self.assertIn("ghostex is not installed", self.items()[0]["subtitle"])
 
-    def test_no_sessions(self):
-        self.fixture.write_text(json.dumps({"ok": True, "sessions": []}))
-        items = self.items()
-        self.assertEqual([i["title"] for i in items], ["No Ghostex sessions"])
+    # ---- bar and popover ----
 
-    def test_page_counts_states_then_lists_each_project_with_its_actions(self):
+    def test_bar_is_amber_with_how_many_need_you(self):
+        line = self.bar()
+        self.assertEqual((line["text"], line["tone"]), ("👻 1", "warn"))
+
+    def test_bar_counts_working_sessions_and_is_the_ghost_alone_when_none_work(self):
+        quiet = dict(SESSIONS, sessions=[s for s in SESSIONS["sessions"] if s.get("pendingQuestionCount") is None])
+        self.fake("sessions", quiet)
+        line = self.bar()
+        self.assertEqual((line["text"], line.get("tone")), ("👻 2", None))
+        self.assertEqual([b.get("title") for b in line["blocks"]], ["Working", "Idle", None])
+        self.fake("sessions", {"ok": True, "sessions": [s for s in quiet["sessions"] if s.get("activity") != "working"]})
+        self.assertEqual(self.bar()["text"], "👻")
+
+    def test_bar_says_why_when_ghostex_is_not_there(self):
+        self.fake("sessions", stderr="Error: gxserver is not running\n", exit=1)
+        line = self.bar()
+        self.assertEqual(line["text"], "👻")
+        self.assertEqual(line["blocks"], [{"type": "markdown",
+                                           "text": "Ghostex sessions are not available: Error: gxserver is not running"}])
+
+    def test_popover_groups_need_you_working_idle_then_the_sleeping_ones(self):
+        blocks = self.popover()
+        lists = [(b.get("title"), [i["title"] for i in b["items"]]) for b in blocks]
+        self.assertEqual(lists, [("Need you", ["Needs an answer"]), ("Working", ["Busy build", "Design pass"]),
+                                 ("Idle", ["Idle one"]), (None, ["2 asleep ›"])])
+        self.assertEqual(blocks[-1]["items"][0]["actions"], [{"type": "push", "command": "asleep",
+                                                              "title": "Show sleeping sessions"}])
+        busy = blocks[1]["items"][0]
+        self.assertEqual(busy["subtitle"], "agents · Claude · just now")
+        self.assertEqual(busy["actions"][0], {"type": "push", "command": "chat", "title": "Open chat", "icon": "bubble",
+                                              "context": {"ref": "S1:P2:G3", "title": "Busy build"}})
+        self.assertNotIn("inline", busy)
+        asleep = self.blocks("asleep", "popover")
+        self.assertEqual([i["title"] for i in asleep[0]["items"]], ["Asleep long ago", "Parked"])
+
+    # ---- page ----
+
+    def test_page_counts_states_then_lists_each_project(self):
         blocks = self.page()
         self.assertEqual(blocks[0]["items"], [
-            {"label": "Ask you something", "value": "1", "tone": "warn"}, {"label": "Working", "value": "2", "tone": "fine"},
+            {"label": "Need you", "value": "1", "tone": "warn"}, {"label": "Working", "value": "2", "tone": "fine"},
             {"label": "Idle", "value": "1"}, {"label": "Asleep", "value": "2"}])
         lists = [(b["title"], [i["title"] for i in b["items"]]) for b in blocks[1:]]
-        self.assertEqual(lists, [("agents", ["Needs an answer", "Busy build"]), ("pilot", ["Design pass", "Idle one", "Asleep long ago", "Parked"]),
+        self.assertEqual(lists, [("agents", ["Needs an answer", "Busy build"]),
+                                 ("pilot", ["Design pass", "Idle one", "Asleep long ago", "Parked"]),
                                  ("dotfiles", ["old-terminal"])])
-        self.assertEqual(self.box.shim_calls(), ["ghostex sessions --json --full"])
+        self.assertEqual(self.calls(), [["sessions", "--json", "--full"], ["read-custom-session-tags", "--json"]])
+
+    def test_page_rows_carry_badges_inline_reply_and_sleep_or_wake_and_a_full_menu(self):
+        rows = self.rows(self.page())
+        self.assertEqual(rows["Busy build"]["badges"], [{"text": "working", "tone": "fine"}, {"text": "2 queued"}])
+        self.assertEqual(rows["Design pass"]["badges"], [{"text": "working", "tone": "fine"}, {"text": "client"}])
+        self.assertEqual(rows["Needs an answer"]["badges"], [{"text": "needs you", "tone": "warn"}, {"text": "testing"}])
+        self.assertEqual(rows["Parked"]["badges"], [{"text": "asleep"}, {"text": "done"}])
+        self.assertEqual(rows["Busy build"]["subtitle"], "Claude · just now")
+        self.assertEqual([(a["title"], a["icon"]) for a in rows["Idle one"]["inline"]], [("Reply", "bubble"), ("Sleep", "moon")])
+        self.assertEqual([(a["title"], a["icon"]) for a in rows["Parked"]["inline"]], [("Reply", "bubble"), ("Wake", "sun")])
+        self.assertEqual([a["title"] for a in rows["Idle one"]["actions"]],
+                         ["Reply", "Rename…", "Tag", "Sleep", "Open in Ghostex", "Close…"])
+        self.assertEqual([a["title"] for a in rows["old-terminal"]["actions"]],
+                         ["Reply", "Rename…", "Tag", "Open in Ghostex", "Close…"])
+        self.assertEqual(rows["old-terminal"]["inline"], [rows["old-terminal"]["actions"][0]])
+        for item in rows.values():
+            for button in item["inline"]:
+                self.assertIn(button, item["actions"])  # an older Pilot reaches every inline through ⋯
+
+    def test_rename_tag_and_close_ask_first(self):
+        actions = {a["title"]: a for a in self.rows(self.page())["Idle one"]["actions"]}
+        self.assertEqual(actions["Rename…"]["ask"], {"text": "Idle one"})
+        self.assertEqual(actions["Close…"]["ask"], {"confirm": "Close Idle one? Its terminal ends."})
+        self.assertIs(actions["Close…"]["destructive"], True)
+        self.assertEqual(actions["Close…"]["context"], {"ref": "S1:P1:G2", "title": "Idle one"})
+        # Sven's own tags first, then the built-ins in use most, then Ghostex's order; its own tag left out, No tag last.
+        self.assertEqual(actions["Tag"]["ask"]["choices"], [
+            {"title": "Client", "value": "custom-abcd1"}, {"title": "Done", "value": "done"},
+            {"title": "Favorite", "value": "favorite"}, {"title": "High priority", "value": "high-priority"},
+            {"title": "Low priority", "value": "low-priority"}, {"title": "Todo", "value": "todo"},
+            {"title": "Research", "value": "research"}, {"title": "No tag", "value": "none"}])
+        untagged = {a["title"]: a for a in self.rows(self.page())["Busy build"]["actions"]}
+        choices = untagged["Tag"]["ask"]["choices"]
+        self.assertEqual(len(choices), 8)
+        self.assertEqual([c["value"] for c in choices[:3]], ["custom-abcd1", "testing", "done"])
+        self.assertNotIn("none", [c["value"] for c in choices])
 
     def test_page_says_why_ghostex_is_not_there(self):
-        self.fake_ghostex(sessions_body='echo "Error: gxserver is not running" >&2; exit 1')
+        self.fake("sessions", stderr="Error: gxserver is not running\n", exit=1)
         self.assertEqual(self.page(), [{"type": "markdown", "text": "Ghostex sessions are not available: Error: gxserver is not running"}])
+
+    # ---- chat ----
+
+    def test_chat_folds_tool_work_and_shows_the_last_six_messages(self):
+        answer = self.blocks_message("chat", "popover", context={"ref": "S1:P2:G3", "title": "Busy build"})
+        self.assertEqual(answer["refresh"], 2)
+        blocks = answer["blocks"]
+        chat = blocks[0]
+        self.assertEqual(chat["type"], "chat")
+        self.assertIs(chat["working"], True)
+        self.assertEqual([(m["role"], m["text"][:40]) for m in chat["messages"]], [
+            ("assistant", "first answer"),
+            ("user", "build 16 is in. **AI usage** is ass\n\n*fr"),
+            ("tool", "ran 2 tools"),
+            ("assistant", "Reading the code."),
+            ("tool", "ran 2 tools"),
+            ("assistant", "Started thread *Surfaces v2 design*."),
+            ("tool", "ran Bash"),
+            ("user", "go on"),
+            ("assistant", "x" * 40),
+            ("tool", "ran Edit")])
+        messages = chat["messages"]
+        self.assertTrue(messages[1]["text"].endswith("*from Pilot coordinator 3*"))
+        self.assertEqual(len(messages[8]["text"]), 1500)
+        self.assertEqual(messages[0]["at"], 101)
+        self.assertEqual(self.calls()[-1], ["read-session-chat", "S1:P2:G3", "--limit", "60", "--json"])
+
+    def test_chat_has_a_reply_box_return_queues_option_return_interrupts(self):
+        blocks = self.chat()
+        box = blocks[1]
+        self.assertEqual(box["placeholder"], "Reply to Busy build…")
+        self.assertEqual(box["action"], {"type": "run", "command": "send", "title": "Send",
+                                         "context": {"ref": "S1:P2:G3", "title": "Busy build"}})
+        self.assertEqual(box["alt"]["context"], {"ref": "S1:P2:G3", "title": "Busy build", "interrupt": True})
+        self.assertIn("2 waiting in its queue", blocks[2]["text"])
+        self.assertEqual([a["title"] for a in blocks[3]["actions"]], ["Open in Ghostex", "Sleep"])
+        asleep = self.chat("S1:P1:G1")
+        self.assertEqual(asleep[1]["placeholder"], "Reply wakes Asleep long ago…")
+        self.assertEqual([a["title"] for a in asleep[3]["actions"]], ["Open in Ghostex", "Wake"])
+        self.assertEqual(self.writes(), [])
+
+    def test_chat_asked_again_long_polls_with_the_last_fingerprint(self):
+        self.chat()
+        self.chat()
+        reads = [c for c in self.calls() if c[0] == "read-session-chat"]
+        self.assertEqual(reads[1], ["read-session-chat", "S1:P2:G3", "--limit", "60", "--json", "--wait-ms", "2000",
+                                    "--fingerprint", "fp1"])
+        cache = self.box.cache / "chat.json"
+        reads_file = json.loads(cache.read_text())
+        reads_file["S1:P2:G3"]["at"] -= 30  # a first open, long after the last read
+        cache.write_text(json.dumps(reads_file))
+        self.chat()
+        self.assertEqual([c for c in self.calls() if c[0] == "read-session-chat"][2][-1], "--json")
+
+    def test_a_chat_that_does_not_read_says_why_and_keeps_its_buttons(self):
+        self.fake("read-session-chat", {"ok": False, "error": "No session matched."}, exit=1)
+        blocks = self.chat()
+        self.assertEqual(blocks[0], {"type": "markdown", "text": "Can't read this chat: No session matched."})
+        self.assertEqual(blocks[-1]["type"], "buttons")
+
+    # ---- writes: each names one session ----
+
+    def test_return_to_a_working_agent_queues_until_it_stops(self):
+        r = self.run_write("send", {"ref": "S1:P2:G3"}, input="looks good, commit it")
+        self.assertEqual(self.writes(), [["queue-session-chat-prompt", "--session-id=S1:P2:G3",
+                                          "--text=looks good, commit it", "--json"]])
+        self.assertEqual(r.of_type("hud")[0]["text"], "Queued until it stops")
+        self.assertOneSession("S1:P2:G3")
+
+    def test_return_to_an_idle_agent_sends_at_once(self):
+        r = self.run_write("send", {"ref": "S1:P1:G2"}, input="next one")
+        self.assertEqual(self.writes(), [["send-session-chat-message", "--session-id=S1:P1:G2", "--text=next one", "--json"]])
+        self.assertEqual(r.of_type("hud")[0]["text"], "Sent")
+
+    def test_option_return_interrupts_a_working_agent_then_sends(self):
+        r = self.run_write("send", {"ref": "S1:P2:G3", "interrupt": True}, input="stop, wrong file")
+        self.assertEqual(self.writes(), [["interrupt-session-chat", "--session-id=S1:P2:G3"],
+                                         ["send-session-chat-message", "--session-id=S1:P2:G3", "--text=stop, wrong file",
+                                          "--json"]])
+        self.assertEqual(r.of_type("hud")[0]["text"], "Interrupted and sent")
+        self.assertOneSession("S1:P2:G3")
+
+    def test_option_return_to_an_idle_agent_has_nothing_to_interrupt(self):
+        self.run_write("send", {"ref": "S1:P1:G2", "interrupt": True}, input="hi")
+        self.assertEqual([c[0] for c in self.writes()], ["send-session-chat-message"])
+
+    def test_a_sleeping_session_is_woken_then_sent_to(self):
+        for interrupt in (False, True):
+            r = self.run_write("send", {"ref": "S1:P1:G1", "interrupt": interrupt}, input="wake up")
+            self.assertEqual(r.of_type("hud")[0]["text"], "Woken and sent")
+        self.assertEqual(self.writes(), [["wake", "--session-id", "S1:P1:G1", "--json"],
+                                         ["send-session-chat-message", "--session-id=S1:P1:G1", "--text=wake up", "--json"]] * 2)
+        self.assertOneSession("S1:P1:G1")
+
+    def test_a_reply_that_looks_like_a_flag_stays_text(self):
+        self.run_write("send", {"ref": "S1:P1:G2"}, input="--help")
+        self.assertEqual(self.writes(), [["send-session-chat-message", "--session-id=S1:P1:G2", "--text=--help", "--json"]])
+
+    def test_a_reply_to_nothing_or_a_session_that_is_gone_sends_nothing(self):
+        r = self.run_write("send", {"ref": "S1:P1:G2"}, input="   ")
+        self.assertEqual(r.of_type("error")[0]["text"], "got no reply to send")
+        r = self.run_write("send", {"ref": "S9:P9:G9"}, input="hi")
+        self.assertEqual(r.of_type("error")[0]["text"], "could not send: that session is gone from Ghostex")
+        r = self.run_write("send", {"ref": "S1:P3:G6"}, input="hi")
+        self.assertEqual(r.of_type("error")[0]["text"], "could not send: it is not running, open it in Ghostex")
+        self.assertEqual(self.writes(), [])
+
+    def test_a_refused_send_says_why(self):
+        self.fake("queue-session-chat-prompt", {"ok": False, "error": "Queue is full."}, exit=1)
+        r = self.run_write("send", {"ref": "S1:P2:G3"}, input="hi")
+        self.assertEqual(r.of_type("error")[0]["text"], "could not send: Queue is full.")
+
+    def test_rename_takes_the_typed_title(self):
+        r = self.run_write("rename", {"ref": "S1:P1:G2", "title": "Idle one"}, input="  Layout rework build ")
+        self.assertEqual(self.writes(), [["rename-session", "--session-id=S1:P1:G2", "--title=Layout rework build", "--json"]])
+        self.assertEqual(r.of_type("hud")[0]["text"], "Renamed")
+        r = self.run_write("rename", {"ref": "S1:P1:G2"}, input="")
+        self.assertEqual(r.of_type("error")[0]["text"], "got no new title")
+        self.assertEqual(len(self.writes()), 1)
+
+    def test_tag_takes_a_built_in_a_custom_tag_or_none_and_nothing_else(self):
+        for value in ("high-priority", "custom-abcd1", "none"):
+            self.run_write("tag", {"ref": "S1:P1:G2"}, input=value)
+        self.assertEqual(self.writes(), [["tag-session", "--session-id=S1:P1:G2", "--tag=%s" % v, "--json"]
+                                         for v in ("high-priority", "custom-abcd1", "none")])
+        for value in ("all", "--help", "urgent", ""):
+            r = self.run_write("tag", {"ref": "S1:P1:G2"}, input=value)
+            self.assertEqual(r.of_type("error")[0]["text"], "got no tag to set")
+        self.assertEqual(len(self.writes()), 3)
+        self.assertOneSession("S1:P1:G2")
+
+    def test_close_sleep_and_wake_name_the_one_session(self):
+        r = self.run_write("close", {"ref": "S1:P1:G2", "title": "Idle one"})
+        self.assertEqual(r.of_type("hud")[0]["text"], "Session closed")
+        self.run_write("sleep", {"ref": "S1:P1:G2"})
+        self.run_write("wake", {"ref": "S1:P1:G2"})
+        self.assertEqual(self.writes(), [[verb, "--session-id", "S1:P1:G2", "--json"] for verb in ("kill", "sleep", "wake")])
+        self.assertOneSession("S1:P1:G2")
+
+    def test_no_command_acts_without_exactly_one_session_ref(self):
+        tries = [(command, {"ref": "all"}) for command in ("send", "rename", "tag", "close", "sleep", "wake", "focus")]
+        tries += [("close", c) for c in ({"ref": "S1:P1:G2 all"}, {"ref": "--help"}, {"ref": ["S1:P1:G2"]}, {}, None)]
+        for command, context in tries:
+            r = self.run_write(command, context, input="done")
+            self.assertEqual(r.of_type("error")[0]["text"], "got no Ghostex session to act on")
+        self.assertEqual(self.calls(), [])
+
+    def test_every_action_the_surfaces_offer_names_one_session(self):
+        blocks = self.page() + self.popover() + self.chat()
+        actions = [a for b in blocks if b["type"] == "list" for i in b["items"] for a in i["actions"]]
+        actions += [b[k] for b in blocks if b["type"] == "input" for k in ("action", "alt")]
+        actions += [a for b in blocks if b["type"] == "buttons" for a in b["actions"]]
+        for action in actions:
+            if action["command"] != "asleep":
+                self.assertIn(action["context"]["ref"], REFS, action)

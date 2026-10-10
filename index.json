@@ -193,11 +193,11 @@
       "id": "ghostex",
       "title": "Ghostex sessions",
       "icon": "👻",
-      "version": "1.1.0",
-      "description": "Jump to any of your Ghostex agent sessions, and put idle ones to sleep or wake them, without hunting through the sidebar.",
+      "version": "2.0.0",
+      "description": "See which Ghostex agents are working or waiting on you from the menu bar, read a session's chat and reply to it, and rename, tag, sleep, wake or close sessions without opening Ghostex.",
       "examples": [
-        "Type pilot: every session in the pilot project with its agent and whether it is working, idle or asleep; Return brings it up in Ghostex",
-        "Cmd+K on a session: Sleep it, or Wake a sleeping one"
+        "The menu bar shows 👻 5: click it, pick Pilot coordinator 2, read its last replies and type an answer; Return queues it until the agent stops, Option+Return interrupts",
+        "Type pilot: every session in the pilot project with its agent and state; Return brings it up in Ghostex"
       ],
       "requires": [
         "python3",
@@ -219,14 +219,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "7b8ac32f080aa80afd31400dd9dc69966de4baac3bfbf610384f3a991ca718b9",
-          "size": 1145,
+          "sha256": "585802718bfa349ba9a1c7f169ffb3293bfa6441bd5a4bd55aab3f8cdd206292",
+          "size": 2130,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "53d3481ff377dd07d1f7e1d6ec6e2e023df4f4d616da28c2c2e03a2cfce12e54",
-          "size": 10876,
+          "sha256": "a55aa66b7ab861629346e17d04c74bf0021851347a3ef5cdf15d3103424c1c21",
+          "size": 29149,
           "executable": true
         }
       ]

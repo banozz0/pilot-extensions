@@ -27,7 +27,7 @@ Every extension here needs `python3`, which macOS has.
 | 🪨 Obsidian search | Search Obsidian notes | Find a note in your Obsidian vault by its title or by what it says, without opening Obsidian first. |
 | 📂 Easy-CD folders | Easy-CD folders | Open the folders you pinned or visited lately with easy-cd (ecd) in a terminal, without typing a path. |
 | 🐙 GitHub | My pull requests, GitHub issues, Failing CI runs | See what on GitHub needs you: pull requests waiting on your review, your own with their checks, issues given to you and CI runs that failed. |
-| 👻 Ghostex sessions | Ghostex sessions | Jump to any of your Ghostex agent sessions, and put idle ones to sleep or wake them, without hunting through the sidebar. |
+| 👻 Ghostex sessions | Ghostex sessions | Your Ghostex agent sessions: a menu-bar ghost counting the working ones (amber when one asks you something), a popover grouped Need you, Working, Idle, and a page per project. A session opens its chat (last six messages, tool work folded) with a reply box: Return queues the reply until the agent stops, Option+Return interrupts, a sleeping one is woken first. Rename, tag, sleep, wake, open in Ghostex or close (asked first), one session at a time. |
 | 📊 AI usage | AI usage, AI usage summary | See how much of your Claude and Codex limits you have used this session and this week, and when each resets, in the menu bar. |
 
 ## Making one
