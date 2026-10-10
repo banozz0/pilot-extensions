@@ -2,6 +2,56 @@
   "schema": 1,
   "extensions": [
     {
+      "id": "ai-usage",
+      "title": "AI usage",
+      "icon": "📊",
+      "version": "1.0.0",
+      "description": "See how much of your Codex limits you have used and how many Claude Code tokens you have burned, and when each resets.",
+      "examples": [
+        "Type AI usage: Codex 5-hour and weekly limits as bars with their reset times, then Claude tokens this block and this week",
+        "Bind AI usage summary to a key: one HUD line like Codex 5 h 52% · week 18% · Claude block 1.2M tokens"
+      ],
+      "requires": [
+        "python3"
+      ],
+      "commands": [
+        {
+          "name": "usage",
+          "title": "AI usage",
+          "mode": "detail"
+        },
+        {
+          "name": "summary",
+          "title": "AI usage summary",
+          "mode": "no-view"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": true,
+        "files": [
+          "~/.codex/sessions",
+          "~/.codex/archived_sessions",
+          "~/.claude/projects"
+        ],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "2cfa96b78a64215b2a4ed1bbace35331c108c02e1fd0d495a075d91319a2faf7",
+          "size": 859,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "cabda7f6e8bbf711206b3d45e7945418de9e1f487ea67e16468b1ea66691a901",
+          "size": 23144,
+          "executable": true
+        }
+      ]
+    },
+    {
       "id": "claude-sessions",
       "title": "Claude Sessions",
       "icon": "🤖",
@@ -91,6 +141,189 @@
           "path": "main.py",
           "sha256": "57ba39df1dbecc85f7ec12d49c308f13c030e78773c3309800aed973f0be1987",
           "size": 9228,
+          "executable": true
+        }
+      ]
+    },
+    {
+      "id": "easy-cd",
+      "title": "Easy-CD folders",
+      "icon": "📂",
+      "version": "1.0.0",
+      "description": "Open the folders you pinned or visited lately with easy-cd (ecd) in a terminal, without typing a path.",
+      "examples": [
+        "Type pil: your pinned ~/code/pilot first, then recent folders matching it; Return opens a terminal there",
+        "Cmd+K on a folder: open it in Finder or copy its path"
+      ],
+      "requires": [
+        "python3"
+      ],
+      "commands": [
+        {
+          "name": "folders",
+          "title": "Easy-CD folders",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": true,
+        "files": [
+          "~/.local/state/ecd"
+        ],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "9c94cd6eccd3d6cef42686dd420fa69a8afc0ef260114d71ca9c7ce0d00b08e9",
+          "size": 914,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "d0d5bdac91db40fd7b4afd11089fed8c7ddca0a4f73fc0c5cd6c003fd94f0a1d",
+          "size": 6285,
+          "executable": true
+        }
+      ]
+    },
+    {
+      "id": "ghostex",
+      "title": "Ghostex sessions",
+      "icon": "👻",
+      "version": "1.0.0",
+      "description": "Jump to any of your Ghostex agent sessions, and put idle ones to sleep or wake them, without hunting through the sidebar.",
+      "examples": [
+        "Type pilot: every session in the pilot project with its agent and whether it is working, idle or asleep; Return brings it up in Ghostex",
+        "Cmd+K on a session: Sleep it, or Wake a sleeping one"
+      ],
+      "requires": [
+        "python3",
+        "ghostex"
+      ],
+      "commands": [
+        {
+          "name": "sessions",
+          "title": "Ghostex sessions",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": false,
+        "files": [],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "1b73eabd9138053da9c4a1ea442baa7c8e145804b818eb268de596670caa0938",
+          "size": 980,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "c8ffe90d158a78251cda12f88f36af3a6d27a9d266e10b54584b1324aac5ffd8",
+          "size": 9392,
+          "executable": true
+        }
+      ]
+    },
+    {
+      "id": "github",
+      "title": "GitHub",
+      "icon": "🐙",
+      "version": "1.0.0",
+      "description": "See what on GitHub needs you: pull requests waiting on your review, your own with their checks, issues given to you and CI runs that failed.",
+      "examples": [
+        "Type pull: PRs waiting on your review first, then yours, each with its checks passing or failing; Return opens it on github.com",
+        "Type failing: CI runs that failed in your repos this week; Cmd+K re-runs only the failed jobs"
+      ],
+      "requires": [
+        "python3",
+        "gh"
+      ],
+      "commands": [
+        {
+          "name": "pull-requests",
+          "title": "My pull requests",
+          "mode": "list"
+        },
+        {
+          "name": "issues",
+          "title": "GitHub issues",
+          "mode": "list"
+        },
+        {
+          "name": "ci-runs",
+          "title": "Failing CI runs",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [
+          "api.github.com"
+        ],
+        "clipboard": true,
+        "files": [],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "f02e0a72d226c037b22699eb1e6483f0215f62c5d0da528b8f9d9e468de43d9d",
+          "size": 1377,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "cee5df0e985f34766084372785f30cf604f2f13b8bf0a213d430dcc21afabbe2",
+          "size": 20172,
+          "executable": true
+        }
+      ]
+    },
+    {
+      "id": "obsidian-search",
+      "title": "Obsidian search",
+      "icon": "🪨",
+      "version": "1.0.0",
+      "description": "Find a note in your Obsidian vault by its title or by what it says, without opening Obsidian first.",
+      "examples": [
+        "Type pilot spec: notes titled with those words first, then notes that mention them, each with the line that matched; Return opens it in Obsidian",
+        "Cmd+K on a note: preview it, copy its [[wikilink]] or path, or show it in Finder"
+      ],
+      "requires": [
+        "python3"
+      ],
+      "commands": [
+        {
+          "name": "search",
+          "title": "Search Obsidian notes",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": true,
+        "files": [
+          "~/Library/Application Support/obsidian/obsidian.json",
+          "your vault folder"
+        ],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "dfe8fc2e7d6ba27276d5c25cdee5137f45aa3e30f93dd046239aa1f85f9e8c4f",
+          "size": 1246,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "3ce2bcab2e5ec59cdc4a782b053cadddc0945e59636bf487e458e5625e1c2ebb",
+          "size": 19657,
           "executable": true
         }
       ]
@@ -253,6 +486,50 @@
           "path": "main.py",
           "sha256": "f87c5f3772358e94d76b81c79e6ce3d4e4034dd98929059cbab55ae643799a41",
           "size": 11235,
+          "executable": true
+        }
+      ]
+    },
+    {
+      "id": "ssh-hosts",
+      "title": "SSH hosts",
+      "icon": "🖥️",
+      "version": "1.0.0",
+      "description": "Connects to a server you named in your SSH config, in a new terminal window, without typing the ssh command.",
+      "examples": [
+        "Type omar: omarchy with its user and address; Return opens ssh omarchy in Ghostty",
+        "Cmd+K on a host: copy ssh omarchy, or open the config file it came from"
+      ],
+      "requires": [
+        "python3",
+        "ssh"
+      ],
+      "commands": [
+        {
+          "name": "hosts",
+          "title": "SSH hosts",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": false,
+        "files": [
+          "~/.ssh/config"
+        ],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "e1c47e20aabf1d5ac383dfa772580bb20f8e5955a8cc187c300ad476983a632b",
+          "size": 879,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "62b939340bd6d02ce4e3da6737cc0fdf3b1d04a4d0b36bdef6cdc93cbb4a3d42",
+          "size": 6846,
           "executable": true
         }
       ]

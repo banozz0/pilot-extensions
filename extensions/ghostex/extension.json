@@ -1,0 +1,17 @@
+{
+  "id": "ghostex",
+  "title": "Ghostex sessions",
+  "icon": "👻",
+  "version": "1.0.0",
+  "description": "Jump to any of your Ghostex agent sessions, and put idle ones to sleep or wake them, without hunting through the sidebar.",
+  "examples": ["Type pilot: every session in the pilot project with its agent and whether it is working, idle or asleep; Return brings it up in Ghostex", "Cmd+K on a session: Sleep it, or Wake a sleeping one"],
+  "runtime": "process",
+  "requires": ["python3", "ghostex"],
+  "permissions": {},
+  "commands": [
+    { "name": "sessions", "title": "Ghostex sessions", "mode": "list", "run": "main.py" },
+    { "name": "focus", "title": "Focus a Ghostex session", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "sleep", "title": "Sleep a Ghostex session", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "wake", "title": "Wake a Ghostex session", "mode": "no-view", "hidden": true, "run": "main.py" }
+  ]
+}

@@ -23,6 +23,12 @@ Every extension here needs `python3`, which macOS has.
 | 🌿 Repos | Git repos | The git repos under a folder (default ~/code, three levels deep) with branch and uncommitted changes; open one in your terminal (Ghostty when installed), in lazygit, in Finder or on GitHub, or copy its path. |
 | 🤖 Claude Sessions | Claude sessions | Your 60 newest Claude Code sessions by title, folder and age; copy or paste the command that resumes one in its folder, open the folder, or see its facts (branch, start, messages, model) with Show details. Read only; a prompt shows only as a short title. |
 | 🧰 Dev Utils | Transform clipboard, Decode JWT from clipboard, Copy new UUID | The clipboard as base64, URL encoding, pretty or minified JSON, epoch to ISO date and back, SHA-256, MD5, lower and upper case, slug, a new UUID; only the rows that fit what you copied; Return copies the result, Cmd+K pastes it. A JWT opens a detail with its header, payload and expiry (not verified). |
+| 🖥️ SSH hosts | SSH hosts | Connects to a server you named in your SSH config, in a new terminal window, without typing the ssh command. |
+| 🪨 Obsidian search | Search Obsidian notes | Find a note in your Obsidian vault by its title or by what it says, without opening Obsidian first. |
+| 📂 Easy-CD folders | Easy-CD folders | Open the folders you pinned or visited lately with easy-cd (ecd) in a terminal, without typing a path. |
+| 🐙 GitHub | My pull requests, GitHub issues, Failing CI runs | See what on GitHub needs you: pull requests waiting on your review, your own with their checks, issues given to you and CI runs that failed. |
+| 👻 Ghostex sessions | Ghostex sessions | Jump to any of your Ghostex agent sessions, and put idle ones to sleep or wake them, without hunting through the sidebar. |
+| 📊 AI usage | AI usage, AI usage summary | See how much of your Codex limits you have used and how many Claude Code tokens you have burned, and when each resets. |
 
 ## Making one
 
