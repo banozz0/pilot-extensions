@@ -19,13 +19,16 @@ MIN, HOUR, DAY = 60, 3600, 86400
 EMAIL, OTHER = "sven@example.com", "work@example.com"
 
 # A stand-in for `codex`, each call logged with its CODEX_HOME. `login` prints a sign-in link, waits for the file
-# `release-login` in CODEX_HOME (at most 20 s), then saves a stand-in login there; `logout` removes it. `app-server`: JSON-RPC
+# `release-login` in CODEX_HOME (at most 20 s), then saves a stand-in login there; with `fail-login` there it fails at once; `logout` removes it. `app-server`: JSON-RPC
 # lines in, its answer from $CODEX_HOME/fake-codex.json (test-only); no such file is a codex that fails at once.
 FAKE_CODEX = r'''
 import json, os, sys, time
 home = os.environ.get("CODEX_HOME", "")
 with open(sys.argv[1], "a") as log:
     log.write("codex %s CODEX_HOME=%s\n" % (" ".join(sys.argv[2:]), home))
+if sys.argv[2:3] == ["login"] and os.path.exists(os.path.join(home, "fail-login")):
+    print("\x1b[31mError logging in: Address already in use (os error 48)\x1b[0m", flush=True)
+    sys.exit(1)
 if sys.argv[2:3] == ["login"]:
     print("If your browser did not open, navigate to this URL to authenticate:\n\nhttps://auth.example.test/sign-in?x=1", flush=True)
     for _ in range(200):
@@ -398,7 +401,10 @@ class AIUsageTests(ExtensionTestCase):
         n = self.now
         self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, n + HOUR), live_window(30, 10080, n + DAY)))
         r = self.run_account("add-account")
-        self.assertEqual(r.of_type("alert")[0]["text"], "Sign in to Codex in your browser")
+        alert = r.of_type("alert")[0]
+        self.assertEqual(alert["text"], "Sign in to Codex in your browser")
+        self.assertEqual(alert["actions"], [{"type": "open", "url": "https://auth.example.test/sign-in?x=1",
+                                             "title": "Open sign-in page"}], "the alert waits for Codex's link and carries it")
         account = self.accounts_root() / "1"
         self.assertTrue(self.wait_for(lambda: self.codex_calls("login")), self.box.shim_calls())
         self.assertEqual(self.codex_calls("login"), [str(account)], "Codex's own login, in Pilot's folder")
@@ -408,7 +414,12 @@ class AIUsageTests(ExtensionTestCase):
         self.assertEqual([a["title"] for a in waiting["blocks"][1]["actions"]], ["Open sign-in page", "Remove"])
         self.assertEqual(waiting["blocks"][1]["actions"][0]["url"], "https://auth.example.test/sign-in?x=1")
         self.assertNotIn(str(account), self.codex_calls(), "nothing asks Codex in a folder while it signs in")
-        self.assertIn("Already waiting", self.run_account("add-account", home=account).of_type("hud")[0]["text"])
+        self.assertEqual(self.blocks_message("bar", "popover", home=self.box.home)["refresh"], ai_usage.SIGNING_IN_REFRESH,
+                         "the popover asks again while a sign-in waits, so the new card shows")
+        for again in (self.run_account("add-account", home=account), self.run_account("add-account")):
+            self.assertIn("Already waiting", again.of_type("alert")[0]["text"])
+        self.assertEqual(self.codex_calls("login"), [str(account)], "a second click starts no second sign-in")
+        self.assertFalse((self.accounts_root() / "2").exists())
         self.codex_says(codex_answer(OTHER, "pro", live_window(26, 300, n + HOUR), live_window(4, 10080, n + DAY)),
                         home=account)
         (account / "release-login").write_text("")
@@ -424,6 +435,34 @@ class AIUsageTests(ExtensionTestCase):
         self.assertTrue((self.accounts_root() / "2").is_dir(), "a second add makes a second folder")
         (self.accounts_root() / "2" / "release-login").write_text("")
         self.assertTrue(self.wait_for(lambda: not list(self.box.cache.glob("login-*"))))
+
+    def test_a_sign_in_codex_stops_says_why_and_the_next_try_reuses_its_folder(self):
+        account = self.accounts_root() / "1"
+        account.mkdir(parents=True)
+        (account / "fail-login").write_text("")
+        r = self.run_account("add-account")
+        alert = r.of_type("alert")[0]
+        self.assertEqual((alert["text"], alert["note"]),
+                         ("Codex's sign-in stopped", "Error logging in: Address already in use (os error 48)"))
+        self.assertEqual(self.codex_calls("login"), [str(account)], "the account never signed in is taken again")
+        failed = self.page_codex()[1]
+        self.assertEqual((failed["subtitle"], failed["blocks"][0]["text"]),
+                         ("Sign-in failed", "Codex's sign-in stopped without signing in: "
+                                            "Error logging in: Address already in use (os error 48)"))
+        self.assertEqual([a["title"] for a in failed["blocks"][1]["actions"]], ["Sign in…", "Remove"])
+        self.assertNotIn("refresh", self.blocks_message("bar", "popover", home=self.box.home))
+        (account / "fail-login").unlink()
+        self.assertEqual(self.run_account("add-account", home=account).of_type("alert")[0]["text"],
+                         "Sign in to Codex in your browser")
+        self.assertEqual(self.page_codex()[1]["subtitle"], "Signing in", "a new try clears the failure")
+        (account / "release-login").write_text("")
+        self.assertTrue(self.wait_for(lambda: not list(self.box.cache.glob("login-*"))), "a sign-in that ends signed in leaves nothing")
+        (account / "auth.json").unlink()
+        (account / "fail-login").write_text("")
+        self.run_account("add-account", home=account)
+        self.assertTrue(list(self.box.cache.glob("login-*-failed.json")))
+        self.run_account("remove-account", home=account)
+        self.assertFalse(list(self.box.cache.glob("login-*")), "Remove clears a failed sign-in's note too")
 
     def page_codex(self):
         return cards(self.page(home=self.box.home), "Codex")

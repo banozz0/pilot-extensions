@@ -81,6 +81,9 @@ PAGE_WAIT = 2.0
 CODEX_TAILS = (256 * 1024, 4 * 1024 * 1024, 32 * 1024 * 1024)
 ACCOUNTS = "codex-accounts"  # Pilot's own Codex accounts, one CODEX_HOME each, under paths.data
 LOGIN_WAIT = 900  # seconds a `codex login` may wait for the browser
+LINK_WAIT = 8.0  # seconds Add Codex account waits for Codex to print its sign-in link
+SIGNING_IN_REFRESH = 3  # a popover showing a sign-in asks again this often, so the new card shows
+PAGE_SIGNING_IN_REFRESH = 15  # a page too, less often: it counts Claude Code's tokens each time
 LINE_AHEAD = 600  # the status line wins over Claude Code's cached read only when this much newer
 STATUS_FILE, STATUS_LOCK, STATUS_EVERY = "status.json", "status.lock", 300
 CODEX_HOME_NAME = re.compile(r"\.codex(-[A-Za-z0-9._-]+)?\Z")
@@ -492,6 +495,11 @@ def login_log(cache_dir, codex_home):
     return os.path.join(cache_dir, "login-%s.log" % home_key(codex_home))
 
 
+def login_failed(cache_dir, codex_home):
+    """Why the last sign-in in this folder ended without a login: Codex's last line, kept until the next try."""
+    return os.path.join(cache_dir, "login-%s-failed.json" % home_key(codex_home))
+
+
 def unlink_quietly(*paths):
     for path in paths:
         try:
@@ -509,12 +517,28 @@ def signing_in(cache_dir, codex_home):
         os.kill(marker["pid"], 0)
     except OSError:
         return None
+    return login_link(cache_dir, codex_home) or ""
+
+
+def read_log(path):
+    """A sign-in log's first 64 KB, "" when it can't be read."""
     try:
-        with open(login_log(cache_dir, codex_home), encoding="utf-8", errors="replace") as f:
-            found = re.search(r"https://\S+", f.read(65536))
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read(65536)
     except OSError:
-        found = None
-    return found.group(0) if found else ""
+        return ""
+
+
+def login_link(cache_dir, codex_home):
+    """The sign-in link Codex printed in this folder's sign-in log, or None."""
+    found = re.search(r"https://\S+", read_log(login_log(cache_dir, codex_home)))
+    return found.group(0) if found else None
+
+
+def failed_line(cache_dir, codex_home):
+    """Codex's last line from a sign-in that ended without a login, or None."""
+    found = read_json(login_failed(cache_dir, codex_home)) if cache_dir else None
+    return found.get("line") if isinstance(found, dict) and isinstance(found.get("line"), str) else None
 
 
 def load_live(cache_dir, codex_home):
@@ -599,9 +623,10 @@ def codex_accounts(home, now, run, ask_until=None):
     out, known = [], set()
     for path in setting + own + (others if VIEW["otherCodex"] else []):
         if path in pending:
-            out.append({"state": "signing_in" if pending[path] is not None else "signed_out", "link": pending[path],
-                        "home": "Pilot account", "name": "Pilot account", "own": path, "asked": False,
-                        "read_at": None, "source": None, "since": "update"})
+            failed = failed_line(cache_dir, path) if pending[path] is None else None
+            out.append({"state": "signing_in" if pending[path] is not None else "failed" if failed else "signed_out",
+                        "link": pending[path], "failed": failed, "home": "Pilot account", "name": "Pilot account",
+                        "own": path, "asked": False, "read_at": None, "source": None, "since": "update"})
             continue
         live, answer, email = path in answers, answers.get(path), answer_email(answers.get(path))
         logs = codex_logs(path, now)
@@ -955,6 +980,7 @@ CODEX_WORDS = {"missing": ("no logs", "Codex didn't answer and has no logs here.
 OWN_WORDS = {"signing_in": ("signing in", "Waiting for you to sign in to Codex in your browser, with the account to add."),
              "signed_out": ("not signed in", "Not signed in yet: sign in with the account to add.")}
 OWN_QUIET = ("unavailable", "Codex didn't answer for this account. Sign in again.")
+OWN_FAILED = ("sign-in failed", "Codex's sign-in stopped without signing in: %s")
 SAME = "This is the same account as one above: remove it, then add the other one."
 NOT_ASKED = ("unavailable", "Not asked: Pilot asks Codex only for the folders in this extension's Codex accounts "
                             "setting and its own accounts, and this one has no run in 8 days.")
@@ -965,6 +991,8 @@ FOOTNOTE = "Codex's numbers come from Codex itself. Pilot reads no sign-in token
 
 
 def codex_words(codex):
+    if codex["own"] and codex["state"] == "failed":
+        return OWN_FAILED[0], OWN_FAILED[1] % codex["failed"]
     if codex["own"]:
         return OWN_WORDS.get(codex["state"], OWN_QUIET)
     return CODEX_WORDS[codex["state"]] if codex["asked"] else NOT_ASKED
@@ -1142,10 +1170,18 @@ def bar_line(data):
 # Commands
 
 
+def blocks_answer(data, blocks, every=SIGNING_IN_REFRESH):
+    """A popover's or page's answer, asked again every `every` s while an account signs in, so it shows as it's done."""
+    answer = {"type": "blocks", "blocks": blocks}
+    if any(c["state"] == "signing_in" for c in data["codex"]):
+        answer["refresh"] = every
+    return answer
+
+
 def show_bar(run):
     if run.get("surface") == "popover":
         data = limits(run, ask_until=START + LIVE_WAIT)
-        send({"type": "blocks", "blocks": cards(data) + [links(data), {"type": "markdown", "text": FOOTNOTE}]})
+        send(blocks_answer(data, cards(data) + [links(data), {"type": "markdown", "text": FOOTNOTE}]))
         return
     data = limits(run)
     gauges, text, level = bar_line(data)
@@ -1155,9 +1191,10 @@ def show_bar(run):
 def show_page(run):
     data = limits(run, ask_until=START + PAGE_WAIT)
     tokens = claude_tokens(run, data["now"], START + PAGE_SCAN)
-    send({"type": "blocks", "blocks": cards(data, page=True) + [links(data),
+    send(blocks_answer(data, cards(data, page=True) + [links(data),
         {"type": "markdown", "text": token_note(tokens) + " " + FOOTNOTE},
-        {"type": "buttons", "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]}]})
+        {"type": "buttons", "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]}],
+        PAGE_SIGNING_IN_REFRESH))
 
 
 def bar(fraction):
@@ -1227,8 +1264,10 @@ def chosen_account(run, data_dir):
 
 
 def add_account(run):
-    """Makes a Pilot account (or takes the one a Sign in button named) and starts Codex's own `codex login` in it,
-    detached, so the browser sign-in may take longer than a command's 30 s. Codex writes its login there itself."""
+    """Takes the account a Sign in button named, else one of Pilot's still not signed in, else makes one, and starts
+    Codex's own `codex login` in it, detached, so the browser sign-in may take longer than a command's 30 s; Codex
+    opens the sign-in page and writes its login there itself. Waits up to LINK_WAIT s for Codex's link, so the alert
+    carries it (a way in when no page opened) or says why Codex stopped."""
     data_dir, cache_dir = run_paths(run)
     if not data_dir or not cache_dir:
         send({"type": "error", "text": "got no data folder to keep the account in"})
@@ -1236,22 +1275,41 @@ def add_account(run):
     if not shutil.which("codex"):
         send({"type": "hud", "text": "Codex isn't installed on this Mac: install it, then add the account"})
         return
-    home = chosen_account(run, data_dir)
+    own = own_accounts(data_dir)
+    # A click that seemed to do nothing is clicked again: reuse an account still signing in or never signed in.
+    home = chosen_account(run, data_dir) or next((p for p in own if signing_in(cache_dir, p) is not None), None) or next(
+        (p for p in own if not os.path.exists(os.path.join(p, "auth.json"))), None)
     if home is None:
-        taken = [int(os.path.basename(p)) for p in own_accounts(data_dir)]
-        home = os.path.join(data_dir, ACCOUNTS, str(max(taken, default=0) + 1))
+        home = os.path.join(data_dir, ACCOUNTS, str(max((int(os.path.basename(p)) for p in own), default=0) + 1))
         os.makedirs(home, mode=0o700, exist_ok=True)
     if signing_in(cache_dir, home) is not None:
-        send({"type": "hud", "text": "Already waiting for that sign-in in your browser"})
+        send(sign_in_alert("Already waiting for that sign-in in your browser", login_link(cache_dir, home)))
         return
+    unlink_quietly(login_failed(cache_dir, home))
     child = spawn("--login", home, cache_dir)
     if child is None:
         send({"type": "error", "text": "could not start Codex's sign-in"})
         return
     write_json(login_path(cache_dir, home), {"at": time.time(), "pid": child.pid})
-    send({"type": "alert", "text": "Sign in to Codex in your browser",
-          "note": "Use the account to add: if the browser is signed in to ChatGPT with another one, sign out there "
-                  "first. It shows in AI usage once you're in."})
+    deadline, link = time.monotonic() + LINK_WAIT, None
+    while link is None and child.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+        link = login_link(cache_dir, home)
+    if link is None and child.poll() is not None and not os.path.exists(os.path.join(home, "auth.json")):
+        send({"type": "alert", "text": "Codex's sign-in stopped", "sound": "Basso",
+              "note": failed_line(cache_dir, home) or "Codex ended without signing in. Try Add Codex account again."})
+        return
+    send(sign_in_alert("Sign in to Codex in your browser", link))
+
+
+def sign_in_alert(text, link):
+    """The alert a sign-in shows: which account to use, and Codex's sign-in page when its link is known."""
+    alert = {"type": "alert", "text": text,
+             "note": "Use the account to add: if the browser is signed in to ChatGPT with another one, sign out there "
+                     "first. It shows in AI usage once you're in."}
+    if link:
+        alert["actions"] = [{"type": "open", "url": link, "title": "Open sign-in page"}]
+    return alert
 
 
 def remove_account(run):
@@ -1281,7 +1339,7 @@ def remove_account(run):
             except (OSError, subprocess.TimeoutExpired):
                 pass
         shutil.rmtree(home, ignore_errors=True)
-        unlink_quietly(live_path(cache_dir, home), login_path(cache_dir, home))
+        unlink_quietly(live_path(cache_dir, home), login_path(cache_dir, home), login_failed(cache_dir, home))
     finally:
         lock.close()
     send({"type": "hud", "text": "Removed the Codex account from Pilot"})
@@ -1332,11 +1390,23 @@ def background_login(codex_home, cache_dir):
         with open(log, "w") as out:
             subprocess.run([shutil.which("codex") or "codex", "login"], env=dict(os.environ, CODEX_HOME=codex_home),
                            stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, timeout=LOGIN_WAIT)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+        why = last_line(log)
+    except OSError:
+        why = "Codex didn't start"
+    except subprocess.TimeoutExpired:
+        why = "it waited %d minutes for the browser" % (LOGIN_WAIT // 60)
     finally:
+        if not os.path.exists(os.path.join(codex_home, "auth.json")):
+            write_json(login_failed(cache_dir, codex_home), {"at": time.time(), "line": why or "Codex ended without a word"})
         unlink_quietly(login_path(cache_dir, codex_home), log, live_path(cache_dir, codex_home))
         lock.close()
+
+
+def last_line(path):
+    """A log's last line with words in it, colour codes and links left out, at most 160 characters."""
+    lines = [re.sub(r"\x1b\[[0-9;]*m|https://\S+", "", l).strip() for l in read_log(path).splitlines()]
+    lines = [l for l in lines if l]
+    return lines[-1][:160] if lines else None
 
 
 def background_refresh(cache_dir):
