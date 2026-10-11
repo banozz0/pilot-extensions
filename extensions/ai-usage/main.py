@@ -19,9 +19,16 @@ asked, since asking makes Codex use that folder's login), the numbers come from 
 (sessions/YYYY/MM/DD/*.jsonl, archived_sessions): `token_count` events whose `payload.rate_limits` holds `primary` and
 `secondary`, each `used_percent`, `window_minutes` and `resets_at` (older Codex: `resets_in_seconds`), plus `credits`.
 
+CodexBar's own Codex accounts (each a CODEX_HOME it keeps under ~/Library/Application Support/CodexBar/managed-codex-homes)
+are asked the same way, after the preference's folders: only each account's `email` and `managedHomePath` are read from
+CodexBar's managed-codex-accounts.json, never a file inside the folder. One whose email an account above already
+answered with is shown once (and not asked again while that answer is known).
+
 Either way, a window whose reset time has passed since the numbers were read has reset: it shows 100% left, with what
 it was. Each window's pace compares its use with the share of the window gone: in reserve or in deficit, whether it lasts
-until the reset (and the headroom) or when it runs out, and a mark where its share left should be by now.
+until the reset (and the headroom) or when it runs out, and a mark where its share left should be by now. As CodexBar:
+no pace until 3% of the window has gone, "On pace" and no mark within 2 points, a session "Projected empty", a week
+"Runs out".
 
 Gemini keeps no local limit, and its quota is only asked with its sign-in token, which Pilot never reads: "limit
 unknown" once the gemini CLI is on PATH, "Not set up" before.
@@ -68,6 +75,7 @@ LIVE_STALE = 120  # the bar and detail hand an older answer to a background refr
 LIVE_WAIT = 3.0  # seconds a popover waits for Codex; a page waits 2 s, leaving time to count Claude Code tokens
 PAGE_WAIT = 2.0
 CODEX_TAILS = (256 * 1024, 4 * 1024 * 1024, 32 * 1024 * 1024)
+CODEXBAR_ACCOUNTS = os.path.join("Library", "Application Support", "CodexBar", "managed-codex-accounts.json")
 CODEX_HOME_NAME = re.compile(r"\.codex(-[A-Za-z0-9._-]+)?\Z")
 STATUSLINE = os.path.join(".local", "state", "ghostex", "agent-hooks", "claude-statusline")
 STATUSLINE_TRIES = 40  # newest status-line files read for one with rate_limits
@@ -77,7 +85,8 @@ WARN, ALERT = 60, 85  # percent used
 BAR = 20
 SET_UP_AI = {"type": "open", "url": "pilot://open?page=ai", "title": "Set up in Pilot › AI…"}
 # The settings (the manifest's preferences), read once per run by configure().
-VIEW = {"show": "left", "barProviders": "both", "barWindow": "session", "pace": True, "otherCodex": True, "gemini": True}
+VIEW = {"show": "left", "barProviders": "both", "barWindow": "session", "pace": True, "codexBar": True, "otherCodex": True,
+        "gemini": True}
 CLAUDE_PLANS = {"claude_max": "Max", "claude_pro": "Pro", "claude_team": "Team", "claude_enterprise": "Enterprise"}
 
 
@@ -233,15 +242,30 @@ def tilde(path, home):
     return "~" + path[len(home):] if path == home or path.startswith(home + os.sep) else path
 
 
+def codexbar_homes(home):
+    """{folder: email} of the Codex accounts CodexBar added: from its account list, each account's email and folder."""
+    data = read_json(os.path.join(home, CODEXBAR_ACCOUNTS))
+    if not isinstance(data, dict) or data.get("version") not in (1, 2, 3) or not isinstance(data.get("accounts"), list):
+        return {}
+    found = {}
+    for account in data["accounts"]:
+        path = account.get("managedHomePath") if isinstance(account, dict) else None
+        if isinstance(path, str) and os.path.isabs(path) and os.path.isdir(path):
+            email = account.get("email")
+            found[os.path.normpath(path)] = email if isinstance(email, str) and email else None
+    return found
+
+
 def codex_homes(home, run):
-    """(folder, asked) per Codex account: the preference's folders, asked live, then any other ~/.codex-* holding a
-    login or logs, read from its logs only."""
+    """(the preference's folders, CodexBar's accounts as {folder: email}, other folders): the first two asked live, the
+    others (any ~/.codex-* holding a login or logs) read from their logs only."""
     raw = (run.get("preferences") or {}).get("codexHomes")
     asked = []
     for part in (raw if isinstance(raw, str) and raw.strip() else "~/.codex").split(","):
         path = os.path.normpath(os.path.expanduser(part.strip())) if part.strip() else ""
         if os.path.isabs(path) and path not in asked:
             asked.append(path)
+    codexbar = {p: e for p, e in codexbar_homes(home).items() if p not in asked} if VIEW["codexBar"] else {}
     try:
         names = sorted(os.listdir(home))
     except OSError:
@@ -252,7 +276,7 @@ def codex_homes(home, run):
         if CODEX_HOME_NAME.match(name) and path not in asked and (
                 os.path.exists(os.path.join(path, "auth.json")) or os.path.isdir(os.path.join(path, "sessions"))):
             others.append(path)
-    return [(p, True) for p in asked] + [(p, False) for p in others]
+    return asked, codexbar, others
 
 
 def codex_files(codex_home, now):
@@ -485,33 +509,46 @@ def from_live(answer, now):
             "credits": credits_text(raw.get("credits")), "reset_credits": answer.get("reset_credits")}
 
 
+def answer_email(answer):
+    """The email Codex answered with, lower case; None without one."""
+    who = answer.get("account") if isinstance(answer, dict) and not answer.get("failed") else None
+    email = who.get("email") if isinstance(who, dict) else None
+    return email.lower() if isinstance(email, str) and email else None
+
+
 def codex_accounts(home, now, run, ask_until=None):
     """Every Codex account, asked ones first. `ask_until` (a monotonic deadline) asks Codex again for an answer over
     30 s old; without it an answer over 120 s old goes to one background refresh."""
     cache_dir = (run.get("paths") or {}).get("cache")
-    homes = codex_homes(home, run)
-    asked = [p for p, live in homes if live]
-    answers = {p: load_live(cache_dir, p) for p in asked}
+    setting, codexbar, others = codex_homes(home, run)
+    answers = {p: load_live(cache_dir, p) for p in setting}
+    known = {answer_email(answers[p]) for p in setting} - {None}
+    codexbar = {p: e for p, e in codexbar.items() if not e or e.lower() not in known}
+    answers.update((p, load_live(cache_dir, p)) for p in codexbar)
+    asked = setting + list(codexbar)
     stale = [p for p in asked if not answers[p] or now - answers[p]["at"] > (LIVE_FRESH if ask_until else LIVE_STALE)]
     if stale and ask_until:
         answers.update(ask_all(cache_dir, stale, ask_until))
     elif stale and cache_dir and shutil.which("codex"):
         spawn("--codex", cache_dir, *stale)
     out = []
-    for path, live in homes:
-        if not live and not VIEW["otherCodex"]:
+    for path in asked + (others if VIEW["otherCodex"] else []):
+        live, answer, email = path in answers, answers.get(path), answer_email(answers.get(path))
+        if path in codexbar and email and email in known:
             continue
         logs = codex_logs(path, now)
-        answer = answers.get(path) if live else None
         answer = None if answer and answer.get("failed") else answer
         provider = logs
         if answer and (logs["state"] != "ok" or answer["at"] >= (logs["read_at"] or 0)):
             provider = from_live(answer, now)
-        provider.update(home=tilde(path, home), asked=live)
+        provider.update(home="CodexBar · " + (codexbar[path] or "account") if path in codexbar else tilde(path, home),
+                        asked=live, codexbar=path in codexbar)
         provider["name"] = provider.get("who") or provider["home"]
         provider["since"] = "update" if provider.get("source") == "live" else "run"
         if live or provider["state"] == "ok" or os.path.exists(os.path.join(path, "auth.json")):
             out.append(provider)
+            if email:
+                known.add(email)
     return out
 
 
@@ -795,7 +832,8 @@ def reset_note(w, since):
 def pace(w, now):
     """(mark, words) for a window, CodexBar's pace: the mark where its share left should be by now if used evenly, and
     how far ahead or behind that it is, whether it lasts until the reset at this rate (and the headroom) or when it runs
-    out. (None, None) without a reset time and length, or once it reset."""
+    out. (None, None) without a reset time and length, once it reset, or under 3% into the window; no mark when on pace
+    (within 2 points), so the mark shows exactly when the words say reserve or deficit."""
     if w["reset_since"] or not w["resets_at"] or not w["minutes"] or not VIEW["pace"]:
         return None, None
     length = w["minutes"] * 60.0
@@ -804,20 +842,25 @@ def pace(w, now):
     if remaining <= 0 or elapsed <= 0:
         return None, None
     expected = 100.0 * elapsed / length
+    if expected < 3:
+        return None, None
     used = w["percent"]
     mark = round(expected if VIEW["show"] == "used" else 100.0 - expected, 1)
-    if used <= 0:
-        return mark, None
     if used >= 100:
         return mark, "Used up until the reset"
     gap = expected - used
-    words = ["%d%% in reserve" % round(gap) if gap >= 0 else "%d%% in deficit" % round(-gap)]
+    if abs(gap) <= 2:
+        mark, words = None, ["On pace"]
+    else:
+        words = ["%d%% in reserve" % round(gap) if gap > 0 else "%d%% in deficit" % round(-gap)]
     rate = used / elapsed
     if used + rate * remaining <= 100:
-        headroom = (100 - used) / (rate * remaining)
-        words += ["Lasts until reset", ("%.1fx headroom" % headroom) if headroom < 10 else "10x+ headroom"]
+        words.append("Lasts until reset")
+        if used > 0:
+            headroom = (100 - used) / (rate * remaining)
+            words.append(("%.1fx headroom" % headroom) if headroom < 10 else "10x+ headroom")
     else:
-        words.append("Runs out in %s" % span((100 - used) / rate))
+        words.append("%s in %s" % ("Projected empty" if w["minutes"] == SESSION else "Runs out", span((100 - used) / rate)))
     return mark, " · ".join(words)
 
 
@@ -831,6 +874,8 @@ CODEX_WORDS = {"missing": ("no logs", "Codex didn't answer and has no logs here.
                "signed_out": ("signed out", "Codex is signed out here. Run `codex login` in a terminal.")}
 NOT_ASKED = ("unavailable", "Not asked: Pilot asks Codex only for the folders in this extension's Codex accounts "
                             "setting, and this one has no run in 8 days.")
+CODEXBAR_WORDS = ("unavailable", "Codex didn't answer for this CodexBar account. Reauthenticate it in CodexBar's "
+                                  "Settings › Providers › Codex.")
 GEMINI_WORDS = {"missing": ("not set up", "The gemini CLI isn't installed on this Mac."),
                 "installed": ("limit unknown", "Gemini keeps no limit on this Mac, and asking Google needs your sign-in "
                                                "token, which Pilot never reads.")}
@@ -838,6 +883,8 @@ FOOTNOTE = "Codex's numbers come from Codex itself. Pilot reads no sign-in token
 
 
 def codex_words(codex):
+    if codex["codexbar"]:
+        return CODEXBAR_WORDS
     return CODEX_WORDS[codex["state"]] if codex["asked"] else NOT_ASKED
 
 

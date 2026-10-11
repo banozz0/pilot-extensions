@@ -1,11 +1,17 @@
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
 import time
+import unittest
 
 from harness import EXTENSIONS, ExtensionTestCase
+
+_spec = importlib.util.spec_from_file_location("ai_usage_main", EXTENSIONS / "ai-usage" / "main.py")
+ai_usage = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ai_usage)
 
 SECRET_SAMPLE = "sk-THIS-MUST-NEVER-BE-PRINTED"
 MIN, HOUR, DAY = 60, 3600, 86400
@@ -257,7 +263,7 @@ class AIUsageTests(ExtensionTestCase):
             {"type": "meter", "label": "Weekly", "percent": 10, "value": "10% left", "tone": "alert", "mark": 28.6,
              "resetsAt": n + 2 * DAY, "note": "19% in deficit · Runs out in 13 h 20 min"},
             {"type": "meter", "label": "Fable weekly", "percent": 100, "value": "100% left", "tone": "fine", "mark": 28.6,
-             "resetsAt": n + 2 * DAY}])
+             "resetsAt": n + 2 * DAY, "note": "71% in reserve · Lasts until reset"}])
         codex = card(blocks, "Codex")
         self.assertTrue(codex["subtitle"].startswith("%s · Plus · updated " % EMAIL), codex["subtitle"])
         self.assertEqual(codex["blocks"][:2], [
@@ -325,8 +331,62 @@ class AIUsageTests(ExtensionTestCase):
         self.status("s", statusline(n, (100, n + HOUR), (0, n + DAY)))
         session, week = card(self.popover(home=self.box.home), "Claude")["blocks"]
         self.assertEqual((session["value"], session["tone"], session["note"]), ("0% left", "alert", "Used up until the reset"))
-        self.assertNotIn("note", week, "nothing used, no pace to tell")
-        self.assertEqual(week["mark"], round(100 - 600 / 7.0, 1))
+        self.assertEqual((week["mark"], week["note"]), (round(100 - 600 / 7.0, 1), "86% in reserve · Lasts until reset"),
+                         "nothing used: all of the expected use is in reserve, as CodexBar says")
+
+    def codexbar_accounts(self, accounts, version=3):
+        """CodexBar's managed-codex-accounts.json (shape read live 2026-10-11, v3) and each account's folder, holding a
+        login Pilot must never read."""
+        root = self.box.home / "Library" / "Application Support" / "CodexBar"
+        rows = []
+        for uuid, email in accounts:
+            folder = root / "managed-codex-homes" / uuid
+            if email is not None:
+                self.write(folder / "auth.json", json.dumps({"bot": SECRET_SAMPLE}))
+            rows.append({"id": uuid, "email": email or "gone@example.com", "providerAccountID": "acc-" + uuid,
+                         "workspaceLabel": "Personal", "workspaceAccountID": None, "authFingerprint": SECRET_SAMPLE,
+                         "managedHomePath": str(folder), "createdAt": 1.0, "updatedAt": 1.0, "lastAuthenticatedAt": 1.0})
+        self.write(root / "managed-codex-accounts.json", json.dumps({"version": version, "accounts": rows}))
+        return "Library/Application Support/CodexBar/managed-codex-homes/"
+
+    def test_codexbar_accounts_asked_like_codexbar_each_shown_once(self):
+        n = self.now
+        managed = self.codexbar_accounts([("A-1", OTHER), ("B-2", EMAIL.upper()), ("C-3", "quiet@example.com"),
+                                          ("D-4", None)])
+        self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, n + HOUR), live_window(30, 10080, n + DAY)))
+        self.codex_says(codex_answer(OTHER, "plus", live_window(26, 300, n + HOUR), live_window(4, 10080, n + DAY)),
+                        home=managed + "A-1")
+        self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, n + HOUR), live_window(30, 10080, n + DAY)),
+                        home=managed + "B-2")
+        blocks = self.popover(home=self.box.home)
+        self.check_quiet(json.dumps(blocks))
+        self.assertEqual([(c["subtitle"].split(" · ")[:2], c["blocks"][0].get("value")) for c in cards(blocks, "Codex")],
+                         [([EMAIL, "Plus"], "80% left"), ([OTHER, "Plus"], "74% left"),
+                          (["CodexBar", "quiet@example.com"], None)],
+                         "CodexBar's copy of the account above is shown once; a folder that is gone is skipped")
+        quiet = cards(blocks, "Codex")[2]
+        self.assertEqual(quiet["subtitle"], "CodexBar · quiet@example.com · unavailable")
+        self.assertIn("Reauthenticate it in CodexBar", quiet["blocks"][0]["text"])
+        home = lambda rel: str(self.box.home / rel)
+        self.assertEqual(sorted(self.codex_calls()), sorted([home(".codex"), home(managed + "A-1"), home(managed + "B-2"),
+                                                             home(managed + "C-3")]))
+        for rel in (".codex", managed + "A-1", managed + "B-2", managed + "C-3"):  # every answer a minute old
+            cached = json.loads(self.live_cache(rel).read_text())
+            cached["at"] -= MIN
+            self.live_cache(rel).write_text(json.dumps(cached))
+        self.popover(home=self.box.home)
+        self.assertEqual(sorted(self.codex_calls()[4:]), sorted([home(".codex"), home(managed + "A-1"),
+                                                                 home(managed + "C-3")]),
+                         "the account ~/.codex answered for is not asked again through CodexBar's folder")
+        self.assertEqual(len(cards(self.popover(home=self.box.home, preferences={"codexBar": False}), "Codex")), 1)
+
+    def test_codexbar_list_unreadable_or_of_another_version_is_left_alone(self):
+        self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, self.now + HOUR), None))
+        for version in (4, "3"):
+            self.codexbar_accounts([("A-1", OTHER)], version=version)
+            self.assertEqual(len(cards(self.popover(home=self.box.home), "Codex")), 1, version)
+        self.write(self.box.home / "Library" / "Application Support" / "CodexBar" / "managed-codex-accounts.json", "{")
+        self.assertEqual(len(cards(self.popover(home=self.box.home), "Codex")), 1)
 
     def test_tones_amber_from_60_red_from_85_used(self):
         n = self.now
@@ -538,3 +598,49 @@ class AIUsageTests(ExtensionTestCase):
         out = subprocess.run([str(program)], input=b'{"type":"run","command":"nope"}\n', capture_output=True,
                              timeout=10, env={"HOME": str(self.box.home), "PATH": "/usr/bin:/bin"}).stdout
         self.assertEqual(json.loads(out), {"type": "error", "text": "has no command nope"})
+
+
+class PaceTests(unittest.TestCase):
+    """CodexBar's pace at fixed times (UsagePace.weekly and UsagePaceText in CodexBar 0.73.0): the mark sits on the
+    draining bar where the share left should be by now, and only when the words say reserve or deficit."""
+    NOW = 1800000000
+
+    def setUp(self):
+        self.view = dict(ai_usage.VIEW)
+
+    def tearDown(self):
+        ai_usage.VIEW.clear()
+        ai_usage.VIEW.update(self.view)
+
+    def pace(self, used, minutes, left_minutes, show="left"):
+        ai_usage.configure({"preferences": {"show": show}})
+        w = ai_usage.window("w", used, self.NOW + left_minutes * MIN, self.NOW, minutes)
+        return ai_usage.pace(w, self.NOW)
+
+    def test_codexbars_session_in_deficit(self):
+        """CodexBar's 2026-10-11 menu: a session 46% used 50 min in (resets in 4 h 10 min) said "29% in deficit ·
+        Projected empty in 1h" with its tick at 83% of a bar 54% full."""
+        self.assertEqual(self.pace(46, 300, 250), (83.3, "29% in deficit · Projected empty in 58 min"))
+        self.assertEqual(self.pace(46, 300, 250, show="used"), (16.7, "29% in deficit · Projected empty in 58 min"))
+
+    def test_a_week_in_deficit_runs_out(self):
+        self.assertEqual(self.pace(61, 10080, 3.5 * 1440), (50.0, "11% in deficit · Runs out in 2 d 5 h"))
+
+    def test_reserve_lasts_with_its_headroom(self):
+        self.assertEqual(self.pace(10, 300, 200), (66.7, "23% in reserve · Lasts until reset · 4.5x headroom"))
+
+    def test_unused_is_all_reserve(self):
+        self.assertEqual(self.pace(0, 10080, 3.5 * 1440), (50.0, "50% in reserve · Lasts until reset"))
+
+    def test_on_pace_within_2_points_has_no_mark(self):
+        self.assertEqual(self.pace(17, 300, 250), (None, "On pace · Projected empty in 4 h 4 min"))
+        self.assertEqual(self.pace(48, 10080, 3.5 * 1440), (None, "On pace · Lasts until reset · 1.1x headroom"))
+        self.assertEqual(self.pace(47.9, 10080, 3.5 * 1440)[0], 50.0, "past 2 points the mark shows")
+
+    def test_no_pace_under_3_percent_in_or_outside_the_window(self):
+        self.assertEqual(self.pace(10, 300, 295), (None, None))
+        self.assertEqual(self.pace(10, 300, 400), (None, None))
+        self.assertEqual(self.pace(10, 300, 0), (None, None))
+
+    def test_used_up(self):
+        self.assertEqual(self.pace(100, 300, 150), (50.0, "Used up until the reset"))
