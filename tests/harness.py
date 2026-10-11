@@ -277,12 +277,17 @@ class ExtensionTestCase(unittest.TestCase):
                     self.assertActionShape(action, ITEM_ACTIONS)
 
     def assertGaugesShape(self, gauges):
-        """A bar line's gauges (story 165): up to 3, a label of at most 2 characters, 1 or 2 meters 0 to 100, a tone."""
+        """A bar line's gauges (story 165): up to 3, a label of at most 2 characters, 1 or 2 meters 0 to 100, a tone; or
+        (2026-10-11) one of Pilot's provider glyphs (`icon` claude or openai) and a `text` of at most 6 characters in
+        place of the meters."""
         self.assertLessEqual(len(gauges), 3)
         for gauge in gauges:
-            self.assertLessEqual(len(gauge["label"]), 2)
-            self.assertTrue(1 <= len(gauge["meters"]) <= 2, gauge)
-            self.assertTrue(all(0 <= m <= 100 for m in gauge["meters"]), gauge)
+            self.assertLessEqual(len(gauge.get("label", "")), 2)
+            self.assertIn(gauge.get("icon"), (None, "claude", "openai"))
+            self.assertLessEqual(len(gauge.get("text", "")), 6)
+            if "meters" in gauge or not ("icon" in gauge or "text" in gauge):
+                self.assertTrue(1 <= len(gauge["meters"]) <= 2, gauge)
+                self.assertTrue(all(0 <= m <= 100 for m in gauge["meters"]), gauge)
             self.assertIn(gauge.get("tone"), self.TONES)
 
     def blocks_message(self, command, surface, **kwargs):

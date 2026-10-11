@@ -23,7 +23,8 @@ no-view within 30 s. Manifest rules mirror `~/code/pilot/Sources/PilotCore/Exten
 per no-view run, `hud` and `alert` with `sound`, the `timer` action. Story 161: `surfaces` (`page`, `bar`: a hidden command and `every` s)
 answered with `blocks` (stats, meter, list, markdown, buttons) or a `bar` line in 5 s and 2 s. Story 165: `gauges`, popover (5 s), `section`,
 `resetsAt`, `chat`, `input`, `badges`/`inline`, `ask`, `refresh`, push to no-view, `pilot`; a meter's `mark` (a tick, 0-100) and `value`
-(the figure in place of its percent). A no-view command's `keyword` (one lowercase word): "todo buy milk" in Hyper+Space runs it with `input`
+(the figure in place of its percent); 2026-10-11: a meter's `markTone`, a section's `aside` and `asideNote` (right of
+its title and subtitle), a gauge's `icon` (`claude`, `openai`: Pilot's glyphs) and `text` in place of its meters. A no-view command's `keyword` (one lowercase word): "todo buy milk" in Hyper+Space runs it with `input`
 "buy milk", hidden or not.
 
 ## Adding or changing an extension

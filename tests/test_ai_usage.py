@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import time
 import unittest
@@ -17,13 +18,26 @@ SECRET_SAMPLE = "sk-THIS-MUST-NEVER-BE-PRINTED"
 MIN, HOUR, DAY = 60, 3600, 86400
 EMAIL, OTHER = "sven@example.com", "work@example.com"
 
-# A stand-in for `codex app-server`: JSON-RPC lines in, its answer from $CODEX_HOME/fake-codex.json (test-only), each
-# call logged with its CODEX_HOME; no such file is a codex that fails at once.
+# A stand-in for `codex`, each call logged with its CODEX_HOME. `login` prints a sign-in link, waits for the file
+# `release-login` in CODEX_HOME (at most 20 s), then saves a stand-in login there; `logout` removes it. `app-server`: JSON-RPC
+# lines in, its answer from $CODEX_HOME/fake-codex.json (test-only); no such file is a codex that fails at once.
 FAKE_CODEX = r'''
 import json, os, sys, time
 home = os.environ.get("CODEX_HOME", "")
 with open(sys.argv[1], "a") as log:
     log.write("codex %s CODEX_HOME=%s\n" % (" ".join(sys.argv[2:]), home))
+if sys.argv[2:3] == ["login"]:
+    print("If your browser did not open, navigate to this URL to authenticate:\n\nhttps://auth.example.test/sign-in?x=1", flush=True)
+    for _ in range(200):
+        if os.path.exists(os.path.join(home, "release-login")):
+            break
+        time.sleep(0.1)
+    with open(os.path.join(home, "auth.json"), "w") as f:
+        f.write('{"stand_in": "signed in"}')
+    sys.exit(0)
+if sys.argv[2:3] == ["logout"]:
+    os.unlink(os.path.join(home, "auth.json"))
+    sys.exit(0)
 try:
     with open(os.path.join(home, "fake-codex.json")) as f:
         fake = json.load(f)
@@ -163,6 +177,13 @@ class AIUsageTests(ExtensionTestCase):
         fake.write_text(FAKE_CODEX)
         # Always shimmed: the real codex on PATH must never be asked from a test.
         self.box.shim("codex", 'exec python3 "%s" "%s" "$@"' % (fake, self.box.log))
+        self.status_pages({"claude": {"indicator": "none", "description": "All Systems Operational", "updated": None},
+                           "codex": {"indicator": "none", "description": "All Systems Operational", "updated": None}})
+
+    def status_pages(self, found, age=0):
+        """The status pages' last read, fresh, so no test reaches the network."""
+        self.box.cache.mkdir(parents=True, exist_ok=True)
+        (self.box.cache / "status.json").write_text(json.dumps(dict(found, at=self.now - age)))
 
     def write(self, path, lines, age=0, append=False):
         """JSON lines, or a str written as it is."""
@@ -187,8 +208,12 @@ class AIUsageTests(ExtensionTestCase):
     def codex_says(self, answer, home=".codex"):
         self.write(self.box.home / home / "fake-codex.json", json.dumps(answer))
 
-    def codex_calls(self):
-        return [line.split("CODEX_HOME=")[1] for line in self.box.shim_calls() if line.startswith("codex app-server")]
+    def codex_calls(self, verb="app-server"):
+        return [line.split("CODEX_HOME=")[1] for line in self.box.shim_calls() if line.startswith("codex " + verb)]
+
+    def face(self, bar):
+        """The bar item's gauges as words: claude 90% openai 89%."""
+        return " ".join("%s %s" % (g["icon"], g["text"]) for g in bar["gauges"]) or bar["text"]
 
     def live_cache(self, home=".codex"):
         name = "codex-%s.json" % hashlib.sha1(str(self.box.home / home).encode()).hexdigest()[:12]
@@ -218,11 +243,11 @@ class AIUsageTests(ExtensionTestCase):
 
     def sven_like(self):
         """Claude Max 20x: session 10% used a third of the way in, week 90% used five days in (a status line 3 min old),
-        Fable's week unused (Claude Code's cache, 10 min old). Codex Plus, asked live: session 11% half way, week 13%
+        Fable's week unused (Claude Code's cache, 20 min old, so the status line wins). Codex Plus, asked live: session 11% half way, week 13%
         three days in, two reset credits left and one spent."""
         n = self.now
         self.status("new", statusline(n - 3 * MIN, (10, n + 200 * MIN), (90, n + 2 * DAY)), age=3 * MIN)
-        self.claude_cache(claude_json(n - 10 * MIN, (50, n + 200 * MIN), (50, n + 2 * DAY), (0, n + 2 * DAY)))
+        self.claude_cache(claude_json(n - 20 * MIN, (50, n + 200 * MIN), (50, n + 2 * DAY), (0, n + 2 * DAY)))
         self.codex_says(codex_answer(EMAIL, "plus", live_window(11, 300, n + 150 * MIN), live_window(13, 10080, n + 4 * DAY),
                                      credits=((n + 19 * DAY, "available"), (n + 27 * DAY, "available"),
                                               (n + 9 * DAY, "redeemed"))))
@@ -256,47 +281,66 @@ class AIUsageTests(ExtensionTestCase):
         blocks = self.popover(home=self.box.home)
         self.check_quiet(json.dumps(blocks))
         claude = card(blocks, "Claude")
-        self.assertEqual(claude["subtitle"], "%s · Max 20x · read %s" % (EMAIL, hhmm(n - 3 * MIN)))
+        self.assertEqual((claude["subtitle"], claude["aside"], claude["asideNote"]),
+                         ("Updated %s" % hhmm(n - 3 * MIN), EMAIL, "Max 20x"))
         self.assertEqual(claude["blocks"], [
             {"type": "meter", "label": "Session", "percent": 90, "value": "90% left", "tone": "fine", "mark": 66.7,
-             "resetsAt": n + 200 * MIN, "note": "23% in reserve · Lasts until reset · 4.5x headroom"},
+             "markTone": "fine", "resetsAt": n + 200 * MIN, "note": "23% in reserve · Lasts until reset"},
             {"type": "meter", "label": "Weekly", "percent": 10, "value": "10% left", "tone": "alert", "mark": 28.6,
-             "resetsAt": n + 2 * DAY, "note": "19% in deficit · Runs out in 13 h 20 min"},
+             "markTone": "alert", "resetsAt": n + 2 * DAY, "note": "19% in deficit · Runs out in 13h 21m"},
             {"type": "meter", "label": "Fable weekly", "percent": 100, "value": "100% left", "tone": "fine", "mark": 28.6,
-             "resetsAt": n + 2 * DAY, "note": "71% in reserve · Lasts until reset"}])
+             "markTone": "fine", "resetsAt": n + 2 * DAY, "note": "71% in reserve · Lasts until reset"}],
+            "Claude never shows CodexBar's headroom hint")
         codex = card(blocks, "Codex")
-        self.assertTrue(codex["subtitle"].startswith("%s · Plus · updated " % EMAIL), codex["subtitle"])
+        self.assertTrue(codex["subtitle"].startswith("Updated "), codex["subtitle"])
+        self.assertEqual((codex["aside"], codex["asideNote"]), (EMAIL, "Plus"))
         self.assertEqual(codex["blocks"][:2], [
             {"type": "meter", "label": "Session", "percent": 89, "value": "89% left", "tone": "fine", "mark": 50.0,
-             "resetsAt": n + 150 * MIN, "note": "39% in reserve · Lasts until reset · 8.1x headroom"},
+             "markTone": "fine", "resetsAt": n + 150 * MIN, "note": "39% in reserve · Lasts until reset · 1.5× headroom"},
             {"type": "meter", "label": "Weekly", "percent": 87, "value": "87% left", "tone": "fine", "mark": 57.1,
-             "resetsAt": n + 4 * DAY, "note": "30% in reserve · Lasts until reset · 5.0x headroom"}])
+             "markTone": "fine", "resetsAt": n + 4 * DAY, "note": "30% in reserve · Lasts until reset · 1.5× headroom"}])
         day = lambda t: time.strftime("%-d %b %H:%M", time.localtime(t))
         self.assertEqual(codex["blocks"][2:], [{"type": "markdown", "text": "**Limit reset credits:** 2 available · expire "
                                                 "%s, %s" % (day(n + 19 * DAY), day(n + 27 * DAY))}],
                          "a zero credit balance is left out, as CodexBar does")
+        rows = blocks[-2]["items"]
+        self.assertEqual([r["title"] for r in rows], ["Claude status", "Codex status", "Claude usage dashboard",
+                                                      "Codex usage dashboard", "Add Codex account…"])
+        self.assertEqual(rows[-1]["actions"], [{"type": "run", "command": "add-account", "title": "Add Codex account…"}])
         self.assertEqual(blocks[-1]["text"], "Codex's numbers come from Codex itself. Pilot reads no sign-in tokens.")
         self.assertEqual(self.codex_calls(), [str(self.box.home / ".codex")])
         bar = self.bar(home=self.box.home)
-        self.assertEqual((bar["text"], bar["tone"], bar.get("gauges")), ("✳90% ⊛89%", "alert", None))
+        self.assertEqual((bar["text"], bar["tone"], bar["gauges"]),
+                         ("", "alert", [{"icon": "claude", "text": "90%", "tone": "alert"}, {"icon": "openai", "text": "89%"}]),
+                         "CodexBar's menu bar: each logo and its session left, in the tone of its most used window")
         self.assertEqual(bar["blocks"], blocks[:-1], "the bar line carries the popover's cards until it answers")
         self.assertEqual(len(self.codex_calls()), 1, "a fresh answer is not asked again")
         self.assertEqual(self.hud(), "Claude: Session 90% left, Weekly 10% left, Fable weekly 100% left · "
                                      "Codex: Session 89% left, Weekly 87% left")
 
-    def test_claude_takes_the_newer_read_and_the_model_weeks_from_claude_code(self):
+    def test_claude_takes_claude_codes_read_unless_the_status_line_is_10_min_newer(self):
+        """CodexBar 2026-10-11 08:47: Claude Code's cached read said week 50% used (CodexBar: 50% left) while the status
+        line said 49, and the session reset 09:49:59 UTC where the status line said 09:50."""
         n = self.now
-        self.status("s", statusline(n - 20 * MIN, (10, n + HOUR), (20, n + DAY)), age=20 * MIN)
-        self.claude_cache(claude_json(n - 5 * MIN, (30, n + HOUR), (40, n + DAY), (5, n + DAY)))
+        self.status("s", statusline(n - MIN, (34, n + HOUR), (49, n + DAY)), age=MIN)
+        self.claude_cache(claude_json(n - 4 * MIN, (34, n + HOUR - 1), (50, n + DAY - 1), (0, n + DAY)))
+        claude = card(self.popover(home=self.box.home), "Claude")
+        self.assertEqual([(m["label"], m["value"], m["resetsAt"]) for m in claude["blocks"]],
+                         [("Session", "66% left", n + HOUR - 1), ("Weekly", "50% left", n + DAY - 1),
+                          ("Fable weekly", "100% left", n + DAY)])
+        self.assertEqual(claude["subtitle"], "Updated " + hhmm(n - 4 * MIN))
+        self.claude_cache(claude_json(n - 12 * MIN, (34, n + HOUR - 1), (50, n + DAY - 1), (0, n + DAY)))
         claude = card(self.popover(home=self.box.home), "Claude")
         self.assertEqual([(m["label"], m["value"]) for m in claude["blocks"]],
-                         [("Session", "70% left"), ("Weekly", "60% left"), ("Fable weekly", "95% left")])
-        self.assertTrue(claude["subtitle"].endswith("read " + hhmm(n - 5 * MIN)))
-        self.claude_cache(claude_json(n - 5 * MIN, (30, n + HOUR), (40, n + DAY), (5, n + DAY), cached_for="someone-else"))
+                         [("Session", "66% left"), ("Weekly", "51% left"), ("Fable weekly", "100% left")],
+                         "a status line over 10 minutes newer wins the session and the week")
+        self.assertEqual([m["resetsAt"] for m in claude["blocks"]], [n + HOUR - 1, n + DAY - 1, n + DAY],
+                         "with the cached read's exact reset times, as CodexBar shows them")
+        self.claude_cache(claude_json(n - 4 * MIN, (30, n + HOUR), (40, n + DAY), (5, n + DAY), cached_for="someone-else"))
         claude = card(self.popover(home=self.box.home), "Claude")
         self.assertEqual([(m["label"], m["value"]) for m in claude["blocks"]],
-                         [("Session", "90% left"), ("Weekly", "80% left")], "another account's cached read is not used")
-        self.assertEqual(claude["subtitle"], "%s · Max 20x · read %s" % (EMAIL, hhmm(n - 20 * MIN)))
+                         [("Session", "66% left"), ("Weekly", "51% left")], "another account's cached read is not used")
+        self.assertEqual(claude["subtitle"], "Updated " + hhmm(n - MIN))
 
     def test_the_newest_status_line_with_limits_wins(self):
         n = self.now
@@ -304,14 +348,14 @@ class AIUsageTests(ExtensionTestCase):
         self.status("mid", statusline(n - 10 * MIN, (12, n + HOUR), (34, n + DAY)), age=10 * MIN)
         self.status("newer-no-limits", statusline(n - 5 * MIN), age=5 * MIN)
         self.status("newest-half-written", '{"version":1,"payl', age=0)
-        self.assertEqual(self.bar(home=self.box.home)["text"], "✳88%")
+        self.assertEqual(self.face(self.bar(home=self.box.home)), "claude 88%")
 
     def test_claude_unknown_without_ghostex_or_a_reply(self):
         for setup in (lambda: None, lambda: self.status("bare", statusline(self.now))):
             setup()
             claude = card(self.popover(home=self.box.home), "Claude")
             self.assertEqual(claude["blocks"], [{"type": "markdown", "text": "Unknown until your next Claude Code reply."}])
-            self.assertNotIn("✳", self.bar(home=self.box.home)["text"])
+            self.assertEqual(self.face(self.bar(home=self.box.home)), "AI")
         self.assertTrue(self.hud().startswith("Claude unknown"))
 
     def test_a_window_that_reset_since_shows_all_left_with_what_it_was(self):
@@ -320,73 +364,137 @@ class AIUsageTests(ExtensionTestCase):
         claude = card(self.popover(home=self.box.home), "Claude")
         self.assertEqual(claude["blocks"][0], {"type": "meter", "label": "Session", "percent": 100, "value": "100% left",
                                                "note": "reset since your last Claude Code reply (was 88% used)"})
-        self.assertEqual(claude["subtitle"], "read %s" % hhmm(n - 6 * HOUR)
+        self.assertEqual(claude["subtitle"], "Updated %s" % hhmm(n - 6 * HOUR)
                          if time.localtime(n - 6 * HOUR)[:3] == time.localtime(n)[:3]
-                         else "read yesterday %s" % hhmm(n - 6 * HOUR))
+                         else "Updated yesterday %s" % hhmm(n - 6 * HOUR))
         bar = self.bar(home=self.box.home)
-        self.assertEqual((bar["text"], bar["tone"]), ("✳100%", "warn"))
+        self.assertEqual((self.face(bar), bar["tone"]), ("claude 100%", "warn"))
 
     def test_pace_used_up_and_unused(self):
         n = self.now
         self.status("s", statusline(n, (100, n + HOUR), (0, n + DAY)))
         session, week = card(self.popover(home=self.box.home), "Claude")["blocks"]
-        self.assertEqual((session["value"], session["tone"], session["note"]), ("0% left", "alert", "Used up until the reset"))
+        self.assertEqual((session["value"], session["tone"], session["percent"]), ("0% left", "alert", 0))
+        self.assertNotIn("note", session, "no pace once used up, as CodexBar")
         self.assertEqual((week["mark"], week["note"]), (round(100 - 600 / 7.0, 1), "86% in reserve · Lasts until reset"),
                          "nothing used: all of the expected use is in reserve, as CodexBar says")
 
-    def codexbar_accounts(self, accounts, version=3):
-        """CodexBar's managed-codex-accounts.json (shape read live 2026-10-11, v3) and each account's folder, holding a
-        login Pilot must never read."""
-        root = self.box.home / "Library" / "Application Support" / "CodexBar"
-        rows = []
-        for uuid, email in accounts:
-            folder = root / "managed-codex-homes" / uuid
-            if email is not None:
-                self.write(folder / "auth.json", json.dumps({"bot": SECRET_SAMPLE}))
-            rows.append({"id": uuid, "email": email or "gone@example.com", "providerAccountID": "acc-" + uuid,
-                         "workspaceLabel": "Personal", "workspaceAccountID": None, "authFingerprint": SECRET_SAMPLE,
-                         "managedHomePath": str(folder), "createdAt": 1.0, "updatedAt": 1.0, "lastAuthenticatedAt": 1.0})
-        self.write(root / "managed-codex-accounts.json", json.dumps({"version": version, "accounts": rows}))
-        return "Library/Application Support/CodexBar/managed-codex-homes/"
+    def accounts_root(self):
+        return self.box.root / "data" / "codex-accounts"
 
-    def test_codexbar_accounts_asked_like_codexbar_each_shown_once(self):
+    def run_account(self, command, home=None, **kw):
+        context = {"home": str(home)} if home else None
+        r = self.run_ext(command, home=self.box.home, context=context, **kw)
+        self.check_quiet(r.stdout)
+        return r
+
+    def wait_for(self, check, seconds=10):
+        deadline = time.monotonic() + seconds
+        while not check() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        return check()
+
+    def test_add_codex_account_runs_codexs_own_sign_in_in_a_folder_of_pilots(self):
         n = self.now
-        managed = self.codexbar_accounts([("A-1", OTHER), ("B-2", EMAIL.upper()), ("C-3", "quiet@example.com"),
-                                          ("D-4", None)])
         self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, n + HOUR), live_window(30, 10080, n + DAY)))
-        self.codex_says(codex_answer(OTHER, "plus", live_window(26, 300, n + HOUR), live_window(4, 10080, n + DAY)),
-                        home=managed + "A-1")
-        self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, n + HOUR), live_window(30, 10080, n + DAY)),
-                        home=managed + "B-2")
-        blocks = self.popover(home=self.box.home)
-        self.check_quiet(json.dumps(blocks))
-        self.assertEqual([(c["subtitle"].split(" · ")[:2], c["blocks"][0].get("value")) for c in cards(blocks, "Codex")],
-                         [([EMAIL, "Plus"], "80% left"), ([OTHER, "Plus"], "74% left"),
-                          (["CodexBar", "quiet@example.com"], None)],
-                         "CodexBar's copy of the account above is shown once; a folder that is gone is skipped")
-        quiet = cards(blocks, "Codex")[2]
-        self.assertEqual(quiet["subtitle"], "CodexBar · quiet@example.com · unavailable")
-        self.assertIn("Reauthenticate it in CodexBar", quiet["blocks"][0]["text"])
-        home = lambda rel: str(self.box.home / rel)
-        self.assertEqual(sorted(self.codex_calls()), sorted([home(".codex"), home(managed + "A-1"), home(managed + "B-2"),
-                                                             home(managed + "C-3")]))
-        for rel in (".codex", managed + "A-1", managed + "B-2", managed + "C-3"):  # every answer a minute old
-            cached = json.loads(self.live_cache(rel).read_text())
-            cached["at"] -= MIN
-            self.live_cache(rel).write_text(json.dumps(cached))
-        self.popover(home=self.box.home)
-        self.assertEqual(sorted(self.codex_calls()[4:]), sorted([home(".codex"), home(managed + "A-1"),
-                                                                 home(managed + "C-3")]),
-                         "the account ~/.codex answered for is not asked again through CodexBar's folder")
-        self.assertEqual(len(cards(self.popover(home=self.box.home, preferences={"codexBar": False}), "Codex")), 1)
+        r = self.run_account("add-account")
+        self.assertEqual(r.of_type("alert")[0]["text"], "Sign in to Codex in your browser")
+        account = self.accounts_root() / "1"
+        self.assertTrue(self.wait_for(lambda: self.codex_calls("login")), self.box.shim_calls())
+        self.assertEqual(self.codex_calls("login"), [str(account)], "Codex's own login, in Pilot's folder")
+        self.assertTrue(self.wait_for(lambda: "https://" in self.page_codex()[1]["blocks"][1]["actions"][0].get("url", "")))
+        waiting = self.page_codex()[1]
+        self.assertEqual((waiting["subtitle"], waiting["aside"]), ("Signing in", "Pilot account"))
+        self.assertEqual([a["title"] for a in waiting["blocks"][1]["actions"]], ["Open sign-in page", "Remove"])
+        self.assertEqual(waiting["blocks"][1]["actions"][0]["url"], "https://auth.example.test/sign-in?x=1")
+        self.assertNotIn(str(account), self.codex_calls(), "nothing asks Codex in a folder while it signs in")
+        self.assertIn("Already waiting", self.run_account("add-account", home=account).of_type("hud")[0]["text"])
+        self.codex_says(codex_answer(OTHER, "pro", live_window(26, 300, n + HOUR), live_window(4, 10080, n + DAY)),
+                        home=account)
+        (account / "release-login").write_text("")
+        self.assertTrue(self.wait_for(lambda: (account / "auth.json").exists() and not list(self.box.cache.glob("login-*"))))
+        codex = self.page_codex()
+        self.assertEqual([(c["aside"], c["asideNote"], c["blocks"][0]["value"]) for c in codex],
+                         [(EMAIL, "Plus", "80% left"), (OTHER, "Pro", "74% left")])
+        self.assertEqual([a["title"] for a in codex[1]["blocks"][-1]["actions"]], ["Remove"])
+        self.assertEqual(sorted(self.codex_calls()), sorted([str(self.box.home / ".codex"), str(account)]))
+        self.assertNotIn(SECRET_SAMPLE, (account / "auth.json").read_text())
+        self.assertEqual(len(cards(self.popover(home=self.box.home), "Codex")), 2)
+        self.assertEqual(self.run_account("add-account").of_type("alert")[0]["text"], "Sign in to Codex in your browser")
+        self.assertTrue((self.accounts_root() / "2").is_dir(), "a second add makes a second folder")
+        (self.accounts_root() / "2" / "release-login").write_text("")
+        self.assertTrue(self.wait_for(lambda: not list(self.box.cache.glob("login-*"))))
 
-    def test_codexbar_list_unreadable_or_of_another_version_is_left_alone(self):
-        self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, self.now + HOUR), None))
-        for version in (4, "3"):
-            self.codexbar_accounts([("A-1", OTHER)], version=version)
-            self.assertEqual(len(cards(self.popover(home=self.box.home), "Codex")), 1, version)
-        self.write(self.box.home / "Library" / "Application Support" / "CodexBar" / "managed-codex-accounts.json", "{")
+    def page_codex(self):
+        return cards(self.page(home=self.box.home), "Codex")
+
+    def test_remove_signs_out_with_codex_then_deletes_the_folder(self):
+        account = self.accounts_root() / "1"
+        self.write(account / "auth.json", '{"stand_in": "signed in"}')
+        self.codex_says({"account": {"type": "chatgpt", "email": OTHER, "planType": "plus"}, "limits": None},
+                        home=account)
+        signed = cards(self.popover(home=self.box.home), "Codex")[1]
+        self.assertEqual(signed["aside"], OTHER)
+        self.assertIn("remove-account", json.dumps(signed["blocks"]), "an account without numbers offers Remove")
+        r = self.run_account("remove-account", home=account)
+        self.assertEqual(r.of_type("hud")[0]["text"], "Removed the Codex account from Pilot")
+        self.assertEqual(self.codex_calls("logout"), [str(account)])
+        self.assertFalse(account.exists())
         self.assertEqual(len(cards(self.popover(home=self.box.home), "Codex")), 1)
+        outside = self.box.home / ".codex"
+        self.assertIn("already gone", self.run_account("remove-account", home=outside).of_type("hud")[0]["text"])
+        self.assertTrue(outside.exists(), "only Pilot's own folders are ever removed")
+
+    def test_an_account_signed_out_offers_sign_in_and_one_held_by_another_run_is_not_asked(self):
+        account = self.accounts_root() / "1"
+        self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, self.now + HOUR), None))
+        account.mkdir(parents=True)
+        quiet = cards(self.popover(home=self.box.home), "Codex")[1]
+        self.assertEqual((quiet["subtitle"], quiet["blocks"][0]["text"]),
+                         ("Not signed in", "Not signed in yet: sign in with the account to add."))
+        self.assertEqual([a["title"] for a in quiet["blocks"][1]["actions"]], ["Sign in…", "Remove"])
+        self.assertEqual(quiet["blocks"][1]["actions"][0]["context"], {"home": str(account)})
+        self.write(account / "auth.json", '{"stand_in": "signed in"}')
+        self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, self.now + HOUR), None), home=account)
+        with open(self.box.cache / ai_usage.lock_name(str(account)), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self.popover(home=self.box.home)
+            self.assertEqual(self.codex_calls(), [str(self.box.home / ".codex")],
+                             "another run holds that folder: it is not asked")
+            self.assertFalse(self.live_cache(account).exists(), "and no failure is saved for it")
+        same = cards(self.popover(home=self.box.home), "Codex")
+        self.assertEqual(same[1]["aside"], EMAIL)
+        self.assertIn(ai_usage.SAME, json.dumps(same[1]["blocks"]))
+
+    def test_status_pages_and_dashboards_under_the_cards(self):
+        self.status_pages({"claude": {"indicator": "minor", "description": "Partially Degraded Service",
+                                      "updated": self.now - 23 * MIN}}, age=MIN)
+        rows = self.popover(home=self.box.home)[-2]["items"]
+        self.assertEqual(rows[0], {"title": "Claude status", "subtitle": "Partially Degraded Service · updated 23 min ago",
+                                   "badges": [{"text": "minor", "tone": "warn"}],
+                                   "actions": [{"type": "open", "url": "https://status.claude.com/", "title": "Open status page"}]})
+        self.assertEqual(rows[1]["subtitle"], "unknown")
+        self.assertEqual([r["actions"][0]["url"] for r in rows[2:4]],
+                         ["https://claude.ai/settings/usage", "https://chatgpt.com/codex/cloud/settings/analytics#usage"])
+        self.assertFalse(self.wait_for(lambda: "--status" in " ".join(self.box.shim_calls()), 0.3))
+
+    def test_status_read_from_each_status_page(self):
+        pages = self.box.root / "pages"
+        for key, body in (("claude", {"page": {"updated_at": "2026-10-11T06:24:21.024Z"},
+                                      "status": {"indicator": "minor", "description": "Partially Degraded Service"}}),
+                          ("codex", "not json")):
+            self.write(pages / key / "api" / "v2" / "status.json", body if isinstance(body, str) else json.dumps(body))
+        saved = dict(ai_usage.STATUS_PAGES)
+        ai_usage.STATUS_PAGES.update((k, (pages / k).as_uri()) for k in saved)
+        try:
+            ai_usage.background_status(str(self.box.cache))
+        finally:
+            ai_usage.STATUS_PAGES.update(saved)
+            signal.alarm(0)
+        found = json.loads((self.box.cache / "status.json").read_text())
+        self.assertEqual(found["claude"], {"indicator": "minor", "description": "Partially Degraded Service",
+                                           "updated": 1791699861})
+        self.assertNotIn("codex", found, "a page that fails is left out")
 
     def test_tones_amber_from_60_red_from_85_used(self):
         n = self.now
@@ -394,7 +502,8 @@ class AIUsageTests(ExtensionTestCase):
         self.codex_says(codex_answer(EMAIL, "pro", live_window(60, 300, n + HOUR), live_window(12, 10080, n + DAY)))
         self.popover(home=self.box.home)
         bar = self.bar(home=self.box.home)
-        self.assertEqual((bar["text"], bar["tone"]), ("✳40% ⊛40%", "warn"))
+        self.assertEqual((self.face(bar), bar["tone"]), ("claude 40% openai 40%", "warn"))
+        self.assertEqual([g.get("tone") for g in bar["gauges"]], [None, "warn"])
         tones = [m["tone"] for c in bar["blocks"][:2] for m in c["blocks"] if m["type"] == "meter"]
         self.assertEqual(tones, ["fine", "fine", "warn", "fine"])
 
@@ -412,7 +521,7 @@ class AIUsageTests(ExtensionTestCase):
                          [("Session", "48% left"), ("Weekly", "82% left")])
         self.assertEqual(codex["blocks"][0]["resetsAt"], int(n - 10 * MIN) + 2 * HOUR + 10 * MIN + 30)
         self.assertEqual(codex["blocks"][2]["items"], [{"label": "Credits", "value": "unlimited"}])
-        self.assertEqual(codex["subtitle"], "~/.codex · last run %s" % hhmm(n - 10 * MIN))
+        self.assertEqual((codex["subtitle"], codex["aside"]), ("Last run %s" % hhmm(n - 10 * MIN), "~/.codex"))
         self.assertEqual(self.codex_calls(), [str(self.box.home / ".codex")], "asked, and it failed")
 
     def test_a_newer_log_beats_an_older_answer(self):
@@ -420,21 +529,21 @@ class AIUsageTests(ExtensionTestCase):
         self.write(self.live_cache(), json.dumps({"at": n - HOUR, "account": {"email": EMAIL, "plan": "Plus"},
                                                   "limits": {"primary": live_window(5, 300, n + HOUR)}}))
         self.codex_log("now", [codex_event(n - MIN, window(70.0, 300, n + HOUR), window(10.0, 10080, n + DAY))])
-        self.assertEqual(self.bar(home=self.box.home)["text"], "⊛30%")
+        self.assertEqual(self.face(self.bar(home=self.box.home)), "openai 30%")
 
     def test_codex_signed_out_absent_or_quiet_for_8_days(self):
         self.codex_says({"account": None, "limits": None})
         codex = card(self.popover(home=self.box.home), "Codex")
-        self.assertEqual((codex["subtitle"], codex["blocks"][0]["text"]),
-                         ("~/.codex · signed out", "Codex is signed out here. Run `codex login` in a terminal."))
+        self.assertEqual((codex["subtitle"], codex["aside"], codex["blocks"][0]["text"]),
+                         ("Signed out", "~/.codex", "Codex is signed out here. Run `codex login` in a terminal."))
         (self.box.home / ".codex" / "fake-codex.json").unlink()
         self.live_cache().unlink()
         codex = card(self.popover(home=self.box.home), "Codex")
         self.assertEqual(codex["blocks"][0]["text"], "Codex didn't answer and has no logs here. Run Codex once.")
-        self.assertNotIn("⊛", self.bar(home=self.box.home)["text"])
+        self.assertEqual(self.face(self.bar(home=self.box.home)), "AI")
         self.codex_log("ancient", [codex_event(self.now - 9 * DAY, window(80.0, 300, self.now), None)], age=9 * DAY)
         codex = card(self.popover(home=self.box.home), "Codex")
-        self.assertEqual(codex["subtitle"], "~/.codex · no run in 8 days")
+        self.assertEqual(codex["subtitle"], "No run in 8 days")
 
     def test_several_codex_accounts_only_the_listed_ones_asked(self):
         n = self.now
@@ -447,11 +556,12 @@ class AIUsageTests(ExtensionTestCase):
         prefs = {"codexHomes": "~/.codex-work, ~/.codex"}
         blocks = self.popover(home=self.box.home, preferences=prefs)
         self.check_quiet(json.dumps(blocks))
-        self.assertEqual([c["subtitle"].split(" · ")[:2] for c in cards(blocks, "Codex")],
-                         [[OTHER, "Team"], [EMAIL, "Plus"], ["~/.codex-dead", "unavailable"], ["~/.codex-pro", "last run %s" % hhmm(n - HOUR)]])
+        self.assertEqual([(c["aside"], c.get("asideNote") or c["subtitle"]) for c in cards(blocks, "Codex")],
+                         [(OTHER, "Team"), (EMAIL, "Plus"), ("~/.codex-dead", "Unavailable"),
+                          ("~/.codex-pro", "Last run %s" % hhmm(n - HOUR))])
         self.assertEqual(sorted(self.codex_calls()), [str(self.box.home / ".codex"), str(self.box.home / ".codex-work")],
                          "a folder not in the setting is never asked: asking makes Codex use its login")
-        self.assertEqual(self.bar(home=self.box.home, preferences=prefs)["text"], "⊛30%", "the first listed account")
+        self.assertEqual(self.face(self.bar(home=self.box.home, preferences=prefs)), "openai 30%", "the first listed account")
         self.assertIn("Codex %s: Session 30%% left · Codex %s: Session 80%% left" % (OTHER, EMAIL),
                       self.run_ext("summary", home=self.box.home, preferences=prefs).of_type("hud")[0]["text"])
 
@@ -463,11 +573,9 @@ class AIUsageTests(ExtensionTestCase):
         started = time.monotonic()
         bar = self.bar(home=self.box.home)
         self.assertLess(time.monotonic() - started, 1.0, "the bar answered without waiting")
-        self.assertEqual(bar["text"], "AI")
-        deadline = time.monotonic() + 10
-        while not self.live_cache().exists() and time.monotonic() < deadline:
-            time.sleep(0.1)
-        self.assertEqual(self.bar(home=self.box.home)["text"], "⊛80%", "the refresh behind it saved Codex's answer")
+        self.assertEqual(self.face(bar), "AI")
+        self.wait_for(lambda: self.live_cache().exists())
+        self.assertEqual(self.face(self.bar(home=self.box.home)), "openai 80%", "the refresh behind it saved Codex's answer")
         self.assertEqual(len(self.codex_calls()), 1)
 
     def test_a_failed_ask_waits_like_an_answer(self):
@@ -485,27 +593,25 @@ class AIUsageTests(ExtensionTestCase):
         codex = card(self.popover(home=self.box.home), "Codex")  # the harness holds it to 5 s
         self.assertEqual(codex["blocks"][0]["value"], "75% left")
 
-    def test_settings_used_instead_of_left_and_what_the_bar_shows(self):
+    def test_always_left_and_what_the_bar_shows(self):
         self.sven_like()
-        n = self.now
-        used = {"show": "used"}
+        used = {"show": "used"}  # 3.1.0's setting, still saved on Sven's Mac: left now, always
         session = card(self.popover(home=self.box.home, preferences=used), "Claude")["blocks"][0]
-        self.assertEqual((session["percent"], session["value"], session["mark"]), (10, "10% used", 33.3),
-                         "the bar fills with what is used and the mark sits where use should be by now")
-        self.assertEqual(self.bar(home=self.box.home, preferences=used)["text"], "✳10% ⊛11%")
-        self.assertTrue(self.run_ext("summary", home=self.box.home, preferences=used).of_type("hud")[0]["text"]
-                        .startswith("Claude: Session 10% used, Weekly 90% used"))
-        self.assertEqual(self.bar(home=self.box.home, preferences={"barWindow": "tightest"})["text"], "✳10% ⊛87%")
+        self.assertEqual((session["percent"], session["value"], session["mark"]), (90, "90% left", 66.7),
+                         "the bar drains as it is used and the mark sits where the share left should be by now")
+        self.assertEqual(self.face(self.bar(home=self.box.home, preferences=used)), "claude 90% openai 89%")
+        self.assertEqual(self.face(self.bar(home=self.box.home, preferences={"barWindow": "tightest"})),
+                         "claude 10% openai 87%")
         bar = self.bar(home=self.box.home, preferences={"barProviders": "codex"})
-        self.assertEqual((bar["text"], bar["tone"]), ("⊛89%", None), "the tone follows only the providers shown")
-        self.assertEqual(self.bar(home=self.box.home, preferences={"barProviders": "claude"})["text"], "✳90%")
+        self.assertEqual((self.face(bar), bar["tone"]), ("openai 89%", None), "the tone follows only the providers shown")
+        self.assertEqual(self.face(self.bar(home=self.box.home, preferences={"barProviders": "claude"})), "claude 90%")
 
     def test_settings_hide_pace_other_codex_folders_and_gemini(self):
         self.sven_like()
         self.write(self.box.home / ".codex-pro" / "auth.json", json.dumps({"bot": SECRET_SAMPLE}))
         prefs = {"pace": False, "otherCodex": False, "gemini": False}
         blocks = self.popover(home=self.box.home, preferences=prefs)
-        self.assertEqual([b.get("title") for b in blocks], ["Claude", "Codex", None])
+        self.assertEqual([b.get("title") for b in blocks], ["Claude", "Codex", None, None])
         meters = [m for c in blocks[:2] for m in c["blocks"] if m["type"] == "meter"]
         self.assertFalse([m for m in meters if "mark" in m or "note" in m], meters)
         self.assertEqual(len(cards(self.popover(home=self.box.home), "Codex")), 2, "on by default")
@@ -515,28 +621,29 @@ class AIUsageTests(ExtensionTestCase):
 
     def test_gemini_not_set_up_until_its_cli_is_on_path(self):
         gemini = card(self.popover(home=self.box.home), "Gemini")
-        self.assertEqual(gemini["subtitle"], "not set up")
+        self.assertEqual(gemini["subtitle"], "Not set up")
         self.assertEqual(gemini["blocks"][1]["actions"],
                          [{"type": "open", "url": "pilot://open?page=ai", "title": "Set up in Pilot › AI…"}])
         self.box.shim("gemini")
         gemini = card(self.popover(home=self.box.home), "Gemini")
-        self.assertEqual(gemini["subtitle"], "limit unknown")
+        self.assertEqual(gemini["subtitle"], "Limit unknown")
         self.assertNotIn("gemini", " ".join(self.box.shim_calls()), "the gemini CLI is looked for, never run")
 
     def test_nothing_known_still_shows_an_item_to_click(self):
         bar = self.bar(home=self.box.home)
-        self.assertEqual((bar["text"], bar["tone"]), ("AI", None))
-        self.assertEqual([c["title"] for c in bar["blocks"]], ["Claude", "Codex", "Gemini"])
+        self.assertEqual((bar["text"], bar["gauges"], bar["tone"]), ("AI", [], None))
+        self.assertEqual([c.get("title") for c in bar["blocks"]], ["Claude", "Codex", "Gemini", None])
 
     def test_page_cards_then_the_token_footnote(self):
         self.sven_like()
         self.claude_fixture()
         blocks = self.page(home=self.box.home)
         self.assertEqual([b.get("title") for b in blocks[:3]], ["Claude", "Codex", "Gemini"])
-        self.assertEqual(blocks[3]["text"], "Claude Code tokens: 1.2M in the last 7 days, 1.2M in this 5-hour block. "
+        self.assertEqual(blocks[3]["type"], "list")
+        self.assertEqual(blocks[4]["text"], "Claude Code tokens: 1.2M in the last 7 days, 1.2M in this 5-hour block. "
                                             "They come from Claude Code's own logs and aren't your limit. Codex's numbers "
                                             "come from Codex itself. Pilot reads no sign-in tokens.")
-        self.assertEqual(blocks[4]["actions"][0]["text"], "Claude: Session 90% left, Weekly 10% left, Fable weekly 100% "
+        self.assertEqual(blocks[5]["actions"][0]["text"], "Claude: Session 90% left, Weekly 10% left, Fable weekly 100% "
                                                           "left · Codex: Session 89% left, Weekly 87% left")
         self.check_quiet(json.dumps(blocks))
 
@@ -556,14 +663,14 @@ class AIUsageTests(ExtensionTestCase):
 
     def test_no_block_running_after_a_quiet_5_hours(self):
         self.write(self.projects / "p" / "s.jsonl", [claude_line(self.now - 6 * HOUR, "msg_1", read=4000)])
-        self.assertIn("4k in the last 7 days, none in this 5-hour block", self.page(home=self.box.home)[3]["text"])
+        self.assertIn("4k in the last 7 days, none in this 5-hour block", self.page(home=self.box.home)[4]["text"])
 
     def test_no_claude_logs_no_token_counts(self):
-        self.assertIn("No Claude Code logs on this Mac", self.page(home=self.box.home)[3]["text"])
+        self.assertIn("No Claude Code logs on this Mac", self.page(home=self.box.home)[4]["text"])
 
     def test_a_rerun_reads_only_the_new_bytes(self):
         main = self.claude_fixture()
-        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[3]["text"])
+        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[4]["text"])
         cache = json.loads((self.box.cache / "claude-usage.json").read_text())["files"]
         self.assertEqual(cache[str(main)]["offset"], main.stat().st_size)
         self.assertNotIn(str(self.projects / "-Users-x-old" / "s0.jsonl"), cache)
@@ -572,14 +679,14 @@ class AIUsageTests(ExtensionTestCase):
         main.write_text(text.replace('"cache_read_input_tokens":698900', '"cache_read_input_tokens":111111'))
         self.assertEqual(len(main.read_text()), len(text))
         self.write(main, [claude_line(self.now - 5 * MIN, "msg_c", out=300000)], append=True)
-        self.assertIn("1.5M in this 5-hour block", self.page(home=self.box.home)[3]["text"])
+        self.assertIn("1.5M in this 5-hour block", self.page(home=self.box.home)[4]["text"])
 
     def test_while_another_refresh_runs_it_answers_from_the_cache_at_once(self):
         self.claude_fixture()
         self.page(home=self.box.home)
         with open(self.box.cache / "refresh.lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            text = self.page(home=self.box.home)[3]["text"]
+            text = self.page(home=self.box.home)[4]["text"]
             self.assertTrue(text.startswith("Still counting"), text)
             self.assertIn("1.2M in this 5-hour block", text)
 
@@ -601,46 +708,48 @@ class AIUsageTests(ExtensionTestCase):
 
 
 class PaceTests(unittest.TestCase):
-    """CodexBar's pace at fixed times (UsagePace.weekly and UsagePaceText in CodexBar 0.73.0): the mark sits on the
-    draining bar where the share left should be by now, and only when the words say reserve or deficit."""
+    """CodexBar's pace at fixed times (UsagePace.weekly and UsagePaceText in CodexBar 0.74): the mark sits on the
+    draining bar where the share left should be by now, green in reserve and red in deficit, and only when the words
+    say reserve or deficit."""
     NOW = 1800000000
 
-    def setUp(self):
-        self.view = dict(ai_usage.VIEW)
-
-    def tearDown(self):
-        ai_usage.VIEW.clear()
-        ai_usage.VIEW.update(self.view)
-
-    def pace(self, used, minutes, left_minutes, show="left"):
-        ai_usage.configure({"preferences": {"show": show}})
+    def pace(self, used, minutes, left_minutes, headroom=False):
         w = ai_usage.window("w", used, self.NOW + left_minutes * MIN, self.NOW, minutes)
-        return ai_usage.pace(w, self.NOW)
+        return ai_usage.pace(w, self.NOW, headroom)
 
     def test_codexbars_session_in_deficit(self):
         """CodexBar's 2026-10-11 menu: a session 46% used 50 min in (resets in 4 h 10 min) said "29% in deficit ·
         Projected empty in 1h" with its tick at 83% of a bar 54% full."""
-        self.assertEqual(self.pace(46, 300, 250), (83.3, "29% in deficit · Projected empty in 58 min"))
-        self.assertEqual(self.pace(46, 300, 250, show="used"), (16.7, "29% in deficit · Projected empty in 58 min"))
+        self.assertEqual(self.pace(46, 300, 250), (83.3, "alert", "29% in deficit · Projected empty in 59m"))
+
+    def test_codexbars_week_of_2026_10_11(self):
+        """CodexBar 08:47: Weekly 50% left, resets in 4 d 11 h 13 min: "14% in deficit · Runs out in 2d 12h"."""
+        self.assertEqual(self.pace(50, 10080, 4 * 1440 + 11 * 60 + 13), (63.8, "alert", "14% in deficit · Runs out in 2d 12h"))
+        self.assertEqual(self.pace(0, 10080, 4 * 1440 + 11 * 60 + 13), (63.8, "fine", "36% in reserve · Lasts until reset"),
+                         "Fable weekly: 36% in reserve")
 
     def test_a_week_in_deficit_runs_out(self):
-        self.assertEqual(self.pace(61, 10080, 3.5 * 1440), (50.0, "11% in deficit · Runs out in 2 d 5 h"))
+        self.assertEqual(self.pace(61, 10080, 3.5 * 1440), (50.0, "alert", "11% in deficit · Runs out in 2d 5h"))
 
-    def test_reserve_lasts_with_its_headroom(self):
-        self.assertEqual(self.pace(10, 300, 200), (66.7, "23% in reserve · Lasts until reset · 4.5x headroom"))
+    def test_headroom_only_for_codex_past_15_points(self):
+        self.assertEqual(self.pace(10, 300, 200), (66.7, "fine", "23% in reserve · Lasts until reset"))
+        self.assertEqual(self.pace(10, 300, 200, headroom=True),
+                         (66.7, "fine", "23% in reserve · Lasts until reset · 1.5× headroom"))
+        self.assertEqual(self.pace(37, 300, 150, headroom=True), (50.0, "fine", "13% in reserve · Lasts until reset"))
 
     def test_unused_is_all_reserve(self):
-        self.assertEqual(self.pace(0, 10080, 3.5 * 1440), (50.0, "50% in reserve · Lasts until reset"))
+        self.assertEqual(self.pace(0, 10080, 3.5 * 1440, headroom=True), (50.0, "fine", "50% in reserve · Lasts until reset"))
 
     def test_on_pace_within_2_points_has_no_mark(self):
-        self.assertEqual(self.pace(17, 300, 250), (None, "On pace · Projected empty in 4 h 4 min"))
-        self.assertEqual(self.pace(48, 10080, 3.5 * 1440), (None, "On pace · Lasts until reset · 1.1x headroom"))
+        self.assertEqual(self.pace(17, 300, 250), (None, None, "On pace · Projected empty in 4h 5m"))
+        self.assertEqual(self.pace(48, 10080, 3.5 * 1440), (None, None, "On pace · Lasts until reset"))
         self.assertEqual(self.pace(47.9, 10080, 3.5 * 1440)[0], 50.0, "past 2 points the mark shows")
 
-    def test_no_pace_under_3_percent_in_or_outside_the_window(self):
-        self.assertEqual(self.pace(10, 300, 295), (None, None))
-        self.assertEqual(self.pace(10, 300, 400), (None, None))
-        self.assertEqual(self.pace(10, 300, 0), (None, None))
+    def test_no_pace_under_3_percent_outside_the_window_or_used_up(self):
+        for args in ((10, 300, 295), (10, 300, 400), (10, 300, 0), (100, 300, 150)):
+            self.assertEqual(self.pace(*args), (None, None, None), args)
 
-    def test_used_up(self):
-        self.assertEqual(self.pace(100, 300, 150), (50.0, "Used up until the reset"))
+    def test_eta_and_share_words_as_codexbar_writes_them(self):
+        self.assertEqual([ai_usage.eta(s) for s in (1, 59 * MIN + 1, 2 * HOUR, 2 * DAY + 5 * MIN, 3 * DAY)],
+                         ["1m", "1h", "2h", "2d 5m", "3d"])
+        self.assertEqual([ai_usage.percent_text(x) for x in (0, 0.4, 66.5, 67.5, 100)], ["0%", "<1%", "66%", "68%", "100%"])

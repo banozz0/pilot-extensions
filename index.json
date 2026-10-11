@@ -5,11 +5,11 @@
       "id": "ai-usage",
       "title": "AI usage",
       "icon": "📊",
-      "version": "3.1.0",
-      "description": "See how much of your Claude and Codex limits is left this session and this week, how your pace compares, and when each resets, in the menu bar.",
+      "version": "3.2.0",
+      "description": "See how much of your Claude and Codex limits is left this session and this week, how your pace compares, and when each resets, in the menu bar, as CodexBar shows it. Add a second Codex account with Codex's own sign-in.",
       "examples": [
-        "Glance at the menu bar: ✳ Claude's and ⊛ Codex's session left, amber once a window is 60% used, red from 85%",
-        "Click it: a card per provider and Codex account with its email and plan, each window's share left, its pace mark and line (in reserve or deficit, lasts until reset or runs out when) and its reset, Claude's per-model week and Codex's limit reset credits"
+        "Glance at the menu bar: Claude's and Codex's logo with the session left, amber once a window is 60% used, red from 85%",
+        "Click it: a card per provider and Codex account with its email and plan, each window's share left draining, its pace tick (green in reserve, red in deficit) and line, and its reset; Claude's per-model week, Codex's limit reset credits, each status page and usage dashboard, and Add Codex account for a second one"
       ],
       "requires": [
         "python3"
@@ -21,35 +21,42 @@
           "mode": "detail"
         },
         {
+          "name": "add-account",
+          "title": "Add Codex account",
+          "mode": "no-view"
+        },
+        {
           "name": "summary",
           "title": "AI usage summary",
           "mode": "no-view"
         }
       ],
       "permissions": {
-        "network": [],
+        "network": [
+          "status.claude.com",
+          "status.openai.com"
+        ],
         "clipboard": true,
         "files": [
           "~/.local/state/ghostex/agent-hooks/claude-statusline",
           "~/.claude.json",
           "~/.codex/sessions",
           "~/.codex/archived_sessions",
-          "~/.claude/projects",
-          "~/Library/Application Support/CodexBar/managed-codex-accounts.json"
+          "~/.claude/projects"
         ],
         "actions": []
       },
       "files": [
         {
           "path": "extension.json",
-          "sha256": "d78129b182ba956ad7224515b7b0fa12468250ede08d42ef3623254211886ff9",
-          "size": 3872,
+          "sha256": "a2b338d5fafadc9633754bc2d754908112893d1ccbedeb8f1856f5ef70accc52",
+          "size": 3602,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "efff09e49c20f952104784601c53e48b860dba5f24ffb2aeb9676c60fec461a1",
-          "size": 49398,
+          "sha256": "854317f121f8771d0f5f35c9c33d014800c5d42e3fe0b986441f8a2464028367",
+          "size": 63029,
           "executable": true
         }
       ]
