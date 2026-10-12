@@ -550,7 +550,7 @@
       "id": "todo",
       "title": "To-do",
       "icon": "☑️",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "description": "A plain to-do list in the menu bar: add one, tick it off, delete it. Kept on this Mac only, no account and no sync.",
       "examples": [
         "The menu bar shows ☑️ 3: click it, type buy milk in Add a to-do and press Return; tick ⬜ when it is done",
@@ -575,14 +575,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "f2b88eb4a8663d97f3d30d16a3a35882e4a838656bf24f9ae8b90ecf49363b18",
-          "size": 1609,
+          "sha256": "d37ac26b4032142e48d36131e70ceeb94060dba6ad39064ef0ba0a495984438e",
+          "size": 1706,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "33cc19cb56456c66d3d1eb1ed7fc810d7f1b7d3560ebbbc7bbf29ed99b6505c1",
-          "size": 10312,
+          "sha256": "9d028b9915873a4fba342d2911158202335bb4ba4e544f70dba5c722dd29c4fa",
+          "size": 11550,
           "executable": true
         }
       ]

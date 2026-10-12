@@ -136,6 +136,27 @@ class TodoTests(ExtensionTestCase):
         self.assertEqual([(b["title"], [i["title"] for i in b["items"]]) for b in lists],
                          [("To do", ["one"]), ("Done", ["two", "three"])])
 
+    def test_a_click_on_a_surface_row_opens_it_and_only_the_checkbox_ticks_it(self):
+        # Sven, 2026-10-12: a click on a row in the menu-bar dropdown marked it done. Pilot runs a row's first action on a
+        # click, so on the popover, the page and the done list the first is Show, never Mark done or Mark not done.
+        self.store(self.todo("a", "one"), self.todo("b", "two", done=True))
+        surfaces = [self.popover(), self.page(), self.blocks("done-list", "popover")]
+        rows = [r for blocks in surfaces for r in self.rows(blocks) if "inline" in r]
+        self.assertEqual(len(rows), 4)
+        for r in rows:
+            self.assertEqual(r["actions"][0], {"type": "push", "command": "show", "title": "Show", "context": {"id": r["id"]}})
+            self.assertIn(r["inline"][0]["command"], ("done", "undone"))
+            self.assertEqual([a["command"] for a in r["actions"][1:3]], [r["inline"][0]["command"], "delete"])
+
+    def test_show_has_the_full_text_and_its_buttons_and_a_gone_one_says_so(self):
+        self.store(self.todo("a", "buy milk"), self.todo("b", "two", done=True))
+        blocks = self.blocks("show", "popover", context={"id": "a"})
+        self.assertIn("buy milk", blocks[0]["text"])
+        self.assertEqual([a.get("command", a["type"]) for a in blocks[1]["actions"]], ["done", "delete", "copy"])
+        done = self.blocks("show", "popover", context={"id": "b"})
+        self.assertEqual(done[1]["actions"][0]["command"], "undone")
+        self.assertEqual(self.blocks("show", "page", context={"id": "zz"}), [{"type": "markdown", "text": "That to-do is gone."}])
+
     def test_empty_popover_and_page_still_offer_the_input(self):
         self.assertEqual([b["type"] for b in self.popover()], ["input", "markdown"])
         self.assertEqual([b["type"] for b in self.page()], ["stats", "input", "markdown"])

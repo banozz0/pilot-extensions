@@ -89,18 +89,30 @@ def split(items):
 
 # ---- rows ----
 
-def row(todo, now):
-    """A to-do as a row: Return or a click ticks it off (or back on), inline ⬜/✅ and ✕, Cmd+K copies its text."""
-    context = {"id": todo["id"]}
+def row(todo, now, surface=True):
+    """A to-do as a row: inline ⬜/✅ ticks it off (or back on) and ✕ deletes it, Cmd+K copies its text. Pilot runs a row's
+    first action on a click, so on a surface a click shows it (Sven, 2026-10-12: a click ticked it off); in Hyper+Space
+    Return ticks it."""
+    toggle, subtitle, icon = ticking(todo, now)
+    actions = buttons(todo, toggle)
+    inline = actions[:2]
+    if surface:
+        actions = [{"type": "push", "command": "show", "title": "Show", "context": {"id": todo["id"]}}] + actions
+    return {"id": todo["id"], "title": todo["text"], "subtitle": subtitle, "icon": icon, "actions": actions, "inline": inline}
+
+
+def ticking(todo, now):
+    """Its Mark done (or Mark not done), its subtitle and its checkbox."""
     if todo.get("done"):
         command, title, icon, subtitle = "undone", "Mark not done", DONE, "done %s" % ago(now - (todo.get("doneAt") or now))
     else:
         command, title, icon, subtitle = "done", "Mark done", OPEN, "added %s" % ago(now - (todo.get("created") or now))
-    toggle = {"type": "run", "command": command, "title": title, "icon": icon, "context": context}
-    delete = {"type": "run", "command": "delete", "title": "Delete", "icon": "xmark", "context": context}
-    return {"id": todo["id"], "title": todo["text"], "subtitle": subtitle, "icon": icon,
-            "actions": [toggle, delete, {"type": "copy", "text": todo["text"], "title": "Copy text"}],
-            "inline": [toggle, delete]}
+    return {"type": "run", "command": command, "title": title, "icon": icon, "context": {"id": todo["id"]}}, subtitle, icon
+
+
+def buttons(todo, toggle):
+    delete = {"type": "run", "command": "delete", "title": "Delete", "icon": "xmark", "context": {"id": todo["id"]}}
+    return [toggle, delete, {"type": "copy", "text": todo["text"], "title": "Copy text"}]
 
 
 def rows(todos, now, most=MOST_ROWS):
@@ -175,6 +187,18 @@ def done_list(run):
     send({"type": "blocks", "blocks": done_blocks(done, time.time())})
 
 
+def show(run):
+    """One to-do, its whole text and when it was added or done, then Mark done, Delete and Copy text."""
+    todo_id = (run.get("context") or {}).get("id")
+    todo = next((t for t in load(data_dir(run)) if t["id"] == todo_id), None)
+    if todo is None:
+        send({"type": "blocks", "blocks": [{"type": "markdown", "text": "That to-do is gone."}]})
+        return
+    toggle, subtitle, icon = ticking(todo, time.time())
+    send({"type": "blocks", "blocks": [{"type": "markdown", "text": "%s %s\n\n%s" % (icon, todo["text"], subtitle)},
+                                       {"type": "buttons", "actions": buttons(todo, toggle)}]})
+
+
 # ---- Hyper+Space ----
 
 def list_todos(run):
@@ -190,7 +214,7 @@ def list_todos(run):
         words = query.lower().split()
         items = [t for t in items if all(w in t["text"].lower() for w in words)]
     open_, done = split(items)
-    found += [row(t, time.time()) for t in open_ + done]
+    found += [row(t, time.time(), surface=False) for t in open_ + done]
     if not found:
         found = [{"title": "Nothing to do", "subtitle": "Type a to-do and press Return to add it", "icon": "☑️"}]
     send({"type": "list", "items": found})
@@ -265,6 +289,8 @@ def main():
         page(run)
     elif command == "done-list":
         done_list(run)
+    elif command == "show":
+        show(run)
     elif command == "add":
         add(run)
     elif command in ("done", "undone", "delete"):
