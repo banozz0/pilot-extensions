@@ -26,6 +26,8 @@ answered with `blocks` (stats, meter, list, markdown, buttons) or a `bar` line i
 (the figure in place of its percent); 2026-10-11: a meter's `markTone`, a section's `aside` and `asideNote` (right of
 its title and subtitle), a gauge's `icon` (`claude`, `openai`: Pilot's glyphs) and `text` in place of its meters. A no-view command's `keyword` (one lowercase word): "todo buy milk" in Hyper+Space runs it with `input`
 "buy milk", hidden or not.
+Omarchy T4 (Pilot fd3da77a): `hero` (glyph, value, unit, place, tone, `items` ≤3 stats) and `strip` (`items` ≤7: label plus glyph,
+high, low); `pilot.blocks` lists the kinds that Pilot draws, comma-separated, so send them only when listed (Weather does).
 
 ## Adding or changing an extension
 1. Make `extensions/<id>/` with `extension.json` (`id`, `title`, emoji `icon`, `version` x.y.z, `description`, `requires`, `permissions`,

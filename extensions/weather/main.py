@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Weather for Pilot: the temperature now as a menu-bar item, a popover and a page with now, the next hours and the next
-7 days (Surfaces v2, Pilot story 165), and a Weather view in Hyper+Space. Data from Open-Meteo (open-meteo.com, free,
+7 days (Surfaces v2, Pilot story 165), and a Weather view in Hyper+Space. A Pilot that draws hero and strip blocks (its
+run message's `pilot.blocks` names them, Omarchy ideas T4) gets a big now over a strip of days instead of today's sections. Data from Open-Meteo (open-meteo.com, free,
 no key, CC BY 4.0): its geocoding API turns the City preference into a place, its forecast API answers for that place.
 
 Where: the City preference, else the city of the Mac's time zone (/etc/localtime, e.g. Europe/Malta → Malta), so no
@@ -29,6 +30,7 @@ BUDGET = {"bar": 1.5, "popover": 3.5, "page": 3.5, "detail": 1.5}  # seconds a v
 REFRESH_BUDGET = 25  # Refresh is a no-view run, stopped at 30 s
 REFRESH_SOON = 3  # a view whose fetch still runs asks again this many seconds later
 HOURS = {"popover": 6, "page": 24}
+DAYS_SHOWN = {"popover": 5, "page": 7}  # the strip's days, today first
 FORECAST = "forecast.json"
 PLACES = "places.json"
 LOCK = "refresh.lock"
@@ -156,7 +158,8 @@ def fetch(want, folder):
     if not error:
         fahrenheit = want["units"] == "fahrenheit"
         query = {"latitude": place["latitude"], "longitude": place["longitude"], "timezone": "auto", "forecast_days": 7,
-                 "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,is_day",
+                 "current": "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,"
+                            "wind_direction_10m,is_day",
                  "hourly": "temperature_2m,weather_code,precipitation_probability,is_day",
                  "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
                  "temperature_unit": "fahrenheit" if fahrenheit else "celsius",
@@ -361,6 +364,25 @@ class Weather:
             found.append((name, emoji, self.high_low(i), words, percent(at(self.daily, "precipitation_probability_max", i))))
         return found
 
+    def hero(self, error):
+        """The big now: the sky's emoji, the temperature, where and what, then feels like, wind and humidity."""
+        words, emoji = self.condition()
+        hero = {"type": "hero", "glyph": emoji, "value": degrees(self.now.get("temperature_2m")).rstrip("°"),
+                "unit": "°F" if self.units == "fahrenheit" else "°C", "place": "%s · %s" % (self.place.get("name"), words),
+                "items": [{"label": "Feels like", "value": degrees(self.now.get("apparent_temperature"))},
+                          {"label": "Wind", "value": wind(self.now.get("wind_speed_10m"), self.now.get("wind_direction_10m"),
+                                                          self.units)},
+                          {"label": "Humidity", "value": percent(self.now.get("relative_humidity_2m"))}]}
+        if error:
+            hero["tone"] = "warn"
+        return hero
+
+    def strip(self, count):
+        """The next `count` days side by side, today first: each its emoji, high and low."""
+        return [{"label": name, "glyph": emoji, "high": degrees(at(self.daily, "temperature_2m_max", i)),
+                 "low": degrees(at(self.daily, "temperature_2m_min", i))}
+                for i, (name, emoji, _, _, _) in enumerate(self.days()[:count])]
+
     def summary(self):
         return "%s: %s, %s" % (self.place.get("name"), degrees(self.now.get("temperature_2m")), self.condition()[0].lower())
 
@@ -380,6 +402,20 @@ def problem(error, running):
 
 # ---- views ----
 
+def draws_hero(run):
+    """Whether this Pilot draws hero and strip blocks: its run message's `pilot.blocks` names them; an older Pilot names
+    none, and gets today's sections."""
+    pilot = run.get("pilot")
+    listed = [k.strip() for k in str(pilot.get("blocks") or "").split(",")] if isinstance(pilot, dict) else []
+    return "hero" in listed and "strip" in listed
+
+
+def hour_list(upcoming):
+    """The next hours as list rows: time and temperature, the sky and the rain chance."""
+    return {"type": "list", "items": [{"title": "%s · %s" % (t, d), "subtitle": "%s · rain %s" % (w, r), "icon": e}
+                                      for t, e, d, w, r in upcoming]}
+
+
 def blocks(weather, error, hours):
     """Now, the next `hours` hours, the next 7 days."""
     words = weather.condition()[0]
@@ -390,8 +426,7 @@ def blocks(weather, error, hours):
     if hours <= 6:
         hour_blocks = [{"type": "stats", "items": [{"label": t, "value": "%s %s" % (e, d)} for t, e, d, _, _ in upcoming]}]
     else:
-        hour_blocks = [{"type": "list", "items": [{"title": "%s · %s" % (t, d), "subtitle": "%s · rain %s" % (w, r),
-                                                   "icon": e} for t, e, d, w, r in upcoming]}]
+        hour_blocks = [hour_list(upcoming)]
     if upcoming:
         found.append({"type": "section", "title": "Next hours", "blocks": hour_blocks})
     days = weather.days()
@@ -405,11 +440,29 @@ def refresh_button():
     return {"type": "run", "command": "refresh", "title": "Refresh", "icon": "refresh"}
 
 
-def answer_blocks(kept, error, running, hours, page=False):
+def view_blocks(run, weather, error, view):
+    """A view's blocks where Pilot draws a hero and a strip: the big now over the next days, offline when it was read, and
+    on a page the next hours; else today's sections."""
+    if not draws_hero(run):
+        return blocks(weather, error, HOURS[view])
+    found = [weather.hero(error)]
+    strip = weather.strip(DAYS_SHOWN[view])
+    if strip:
+        found.append({"type": "strip", "items": strip})
+    if error:
+        found.append({"type": "markdown", "text": read_line(weather, error)})
+    upcoming = weather.hours(HOURS[view]) if view == "page" else []
+    if upcoming:
+        found.append({"type": "section", "title": "Next hours", "blocks": [hour_list(upcoming)]})
+    return found
+
+
+def answer_blocks(run, kept, error, running, view):
+    page = view == "page"
     if not kept:
         found = [{"type": "markdown", "text": problem(error, running)}]
     else:
-        found = blocks(Weather(kept), error, hours)
+        found = view_blocks(run, Weather(kept), error, view)
     if page:
         found += [{"type": "buttons", "actions": [refresh_button()]}, {"type": "markdown", "text": CREDIT}]
     message = {"type": "blocks", "blocks": found}
@@ -422,12 +475,12 @@ def bar(run):
     popover = run.get("surface") == "popover"
     kept, error, running = forecast(run, BUDGET["popover" if popover else "bar"])
     if popover:
-        answer_blocks(kept, error, running, HOURS["popover"])
+        answer_blocks(run, kept, error, running, "popover")
     elif not kept:
         send({"type": "bar", "text": "🌡️ –", "tone": "warn", "blocks": [{"type": "markdown", "text": problem(error, running)}]})
     else:
         weather = Weather(kept)
-        message = {"type": "bar", "text": weather.bar_text(), "blocks": blocks(weather, error, HOURS["popover"])}
+        message = {"type": "bar", "text": weather.bar_text(), "blocks": view_blocks(run, weather, error, "popover")}
         if error:
             message["tone"] = "warn"
         send(message)
@@ -435,7 +488,7 @@ def bar(run):
 
 def page(run):
     kept, error, running = forecast(run, BUDGET["page"])
-    answer_blocks(kept, error, running, HOURS["page"], page=True)
+    answer_blocks(run, kept, error, running, "page")
 
 
 def detail(run):

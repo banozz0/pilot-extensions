@@ -222,14 +222,15 @@ class ExtensionTestCase(unittest.TestCase):
             wanted = "no-view" if action["type"] == "run" else ("list", "detail", "no-view")  # a push in a popover: 165
             self.assertIn(names[action["command"]]["mode"], wanted, action)
 
-    BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons", "section", "chat", "input"}
+    BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons", "section", "chat", "input", "hero", "strip"}
     ROLES = ("user", "assistant", "tool")
     TONES = (None, "fine", "warn", "alert")
 
     def assertBlocksShape(self, blocks, types=BLOCK_TYPES):
         """Every block as Pilot decodes it (stories 161 and 165): a known type with its fields; a list's items and the
         buttons' actions as an item's; a section's blocks one level deep, a meter's resetsAt seconds since 1970, its mark 0
-        to 100 and value a string; a chat's messages (20 at most), an input's run actions."""
+        to 100 and value a string; a chat's messages (20 at most), an input's run actions; a hero's value and at most 3
+        stats, a strip's 1 to 7 columns, each a label and a glyph, high or low (Omarchy ideas T4)."""
         self.assertIsInstance(blocks, list)
         for block in blocks:
             self.assertIn(block.get("type"), types, block)
@@ -257,6 +258,20 @@ class ExtensionTestCase(unittest.TestCase):
                 self.assertItemShape(block["items"])
             elif kind == "markdown":
                 self.assertIsInstance(block.get("text"), str)
+            elif kind == "hero":
+                self.assertIsInstance(block.get("value"), (str, int, float))
+                for key in ("glyph", "unit", "place"):
+                    self.assertIsInstance(block.get(key, ""), str)
+                self.assertIn(block.get("tone"), self.TONES)
+                self.assertLessEqual(len(block.get("items", [])), 3)
+                for stat in block.get("items", []):
+                    self.assertIsInstance(stat.get("label"), str)
+                    self.assertIsInstance(stat.get("value"), str)
+            elif kind == "strip":
+                self.assertTrue(1 <= len(block["items"]) <= 7, block)
+                for column in block["items"]:
+                    self.assertIsInstance(column.get("label"), str)
+                    self.assertTrue(any(isinstance(column.get(k), str) for k in ("glyph", "high", "low")), column)
             elif kind == "chat":
                 self.assertIsInstance(block.get("working", False), bool)
                 self.assertLessEqual(len(block["messages"]), 20)

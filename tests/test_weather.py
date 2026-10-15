@@ -23,7 +23,7 @@ def forecast(is_day=1):
     hours = ["2026-10-%02dT%02d:00" % (10 + i // 24, i % 24) for i in range(72)]
     return {"latitude": 35.9, "longitude": 14.5, "utc_offset_seconds": 7200, "timezone": "Europe/Malta",
             "current": {"time": "2026-10-10T14:15", "interval": 900, "temperature_2m": 23.6, "apparent_temperature": 25.8,
-                        "weather_code": 0, "wind_speed_10m": 15.2, "wind_direction_10m": 45, "is_day": is_day},
+                        "relative_humidity_2m": 61, "weather_code": 0, "wind_speed_10m": 15.2, "wind_direction_10m": 45, "is_day": is_day},
             "hourly": {"time": hours, "temperature_2m": [20 + i % 5 for i in range(72)],
                        "weather_code": [61 if i == 16 else 1 for i in range(72)],
                        "precipitation_probability": [10 if i == 14 else 40 for i in range(72)],
@@ -77,6 +77,10 @@ class WeatherTests(ExtensionTestCase):
         return {b["title"]: b for b in blocks if b["type"] == "section"}
 
     VALLETTA = {"city": "Valletta"}
+    # Pilot's defaults as a Pilot that draws hero and strip sends them (Pilot fd3da77a, Omarchy ideas Q100), and an older one's.
+    PILOT = {"repos": "/tmp/code", "terminal": "com.mitchellh.ghostty",
+             "blocks": "stats,meter,list,markdown,buttons,section,chat,input,hero,strip"}
+    OLDER = {"repos": "/tmp/code", "terminal": "com.mitchellh.ghostty"}
 
     # ---- the bar and the cache ----
 
@@ -160,6 +164,57 @@ class WeatherTests(ExtensionTestCase):
         self.assertEqual((hours[0]["title"], hours[0]["subtitle"]), ("15:00 · 20°", "Mainly clear · rain 40%"))
         self.assertEqual(blocks[-2]["actions"][0]["command"], "refresh")
         self.assertIn("Open-Meteo.com", blocks[-1]["text"])
+
+    # ---- the glance: hero and strip where Pilot draws them ----
+
+    def test_popover_leads_with_a_big_now_over_five_days_when_pilot_draws_them(self):
+        hero, strip = self.popover(preferences=self.VALLETTA, pilot=self.PILOT)
+        self.assertEqual(hero, {"type": "hero", "glyph": "☀️", "value": "24", "unit": "°C", "place": "Valletta · Clear",
+                                "items": [{"label": "Feels like", "value": "26°"}, {"label": "Wind", "value": "15 km/h NE"},
+                                          {"label": "Humidity", "value": "61%"}]})
+        self.assertEqual(strip["type"], "strip")
+        self.assertEqual([(c["label"], c["glyph"], c["high"], c["low"]) for c in strip["items"]],
+                         [("Today", "☀️", "27°", "19°"), ("Sun", "🌧️", "22°", "17°"), ("Mon", "☁️", "21°", "16°"),
+                          ("Tue", "☁️", "23°", "16°"), ("Wed", "⛈️", "24°", "18°")])
+        self.assertIn("relative_humidity_2m", self.calls()[-1][1]["current"])
+
+    def test_the_bar_keeps_its_text_and_carries_the_glance(self):
+        line = self.bar(preferences=self.VALLETTA, pilot=dict(self.PILOT, blocks="stats, hero, strip"))
+        self.assertEqual(line["text"], "☀️ 24°")
+        self.assertBlocksShape(line["blocks"])
+        self.assertEqual([b["type"] for b in line["blocks"]], ["hero", "strip"])
+
+    def test_page_shows_the_glance_over_seven_days_then_24_hours_refresh_and_the_credit(self):
+        blocks = self.page(preferences=self.VALLETTA, pilot=self.PILOT)
+        self.assertEqual([b["type"] for b in blocks], ["hero", "strip", "section", "buttons", "markdown"])
+        self.assertEqual(len(blocks[1]["items"]), 7)
+        self.assertEqual(len(blocks[2]["blocks"][0]["items"]), 24)
+        self.assertEqual(blocks[3]["actions"][0]["command"], "refresh")
+        self.assertIn("Open-Meteo.com", blocks[4]["text"])
+
+    def test_an_older_pilot_gets_todays_sections(self):
+        for pilot in (None, self.OLDER, dict(self.OLDER, blocks="stats,meter,hero"), "hero,strip"):
+            with self.subTest(pilot=pilot):
+                found = self.sections(self.popover(preferences=self.VALLETTA, pilot=pilot))
+                self.assertEqual(list(found), ["Now in Valletta", "Next hours", "Next 7 days"])
+        line = self.bar(preferences=self.VALLETTA, pilot=self.OLDER)
+        self.assertEqual([b["type"] for b in line["blocks"]], ["section", "section", "section"])
+
+    def test_offline_the_glance_warns_and_says_when_it_was_read(self):
+        self.bar(preferences=self.VALLETTA)
+        kept = self.kept()
+        kept["fetchedAt"] -= 3600
+        (self.box.cache / "forecast.json").write_text(json.dumps(kept))
+        self.fake_curl(fail="(6) Could not resolve host: api.open-meteo.com")
+        self.bar(preferences=self.VALLETTA)
+        self.settle()
+        hero, _, note = self.popover(preferences=self.VALLETTA, pilot=self.PILOT)
+        self.assertEqual(hero["tone"], "warn")
+        self.assertTrue(note["text"].startswith("Offline · from "), note)
+
+    def test_fahrenheit_glance_says_f_and_mph(self):
+        hero = self.popover(preferences=dict(self.VALLETTA, units="fahrenheit"), pilot=self.PILOT)[0]
+        self.assertEqual((hero["unit"], hero["items"][1]["value"]), ("°F", "15 mph NE"))
 
     def test_night_shows_the_moon_now(self):
         self.fake_curl(is_day=0)
