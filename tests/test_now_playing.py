@@ -1,3 +1,4 @@
+import base64
 import json
 import sys
 
@@ -19,11 +20,23 @@ if args[:2] == ["-l", "JavaScript"]:
     if scene.get("fails"):
         sys.stderr.write("execution error: Error: something went wrong (-2700)\n")
         sys.exit(1)
-    if len(args) > 4 and "after" in scene:
+    if len(args) > 5 and "after" in scene:
         scene["now"] = scene.pop("after")
         with open(os.path.join(root, "scenario.json"), "w") as f:
             json.dump(scene, f)
-    print(json.dumps(scene.get("now", {})))
+    now = scene.get("now", {})
+    if len(args) > 4 and args[4] and scene.get("art") and now.get("Title"):  # the artwork, written once into the folder
+        path = os.path.join(args[4], "art-" + now["Title"][:3].lower() + ".img")
+        if not os.path.exists(path):
+            with open(path, "w") as f:
+                f.write(scene["art"])
+        now = dict(now, artwork=os.path.basename(path))
+    print(json.dumps(now))
+elif "tabs of w" in args[1]:
+    if scene.get("denyTab"):
+        sys.stderr.write("execution error: Not authorized to send Apple events to Google Chrome. (-1743)\n")
+        sys.exit(1)
+    print(scene.get("tab", "tab"))
 else:
     if scene.get("deny"):
         sys.stderr.write("execution error: Not authorized to send Apple events to Music. (-1743)\n")
@@ -73,10 +86,14 @@ class NowPlayingTests(ExtensionTestCase):
 
     def commands(self):
         """The MediaRemote commands sent, in order."""
-        return [c[4] for c in self.calls() if c[:2] == ["-l", "JavaScript"] and len(c) > 4]
+        return [c[5] for c in self.calls() if c[:2] == ["-l", "JavaScript"] and len(c) > 5]
 
     def apple_events(self):
         return [c for c in self.calls() if c[:2] != ["-l", "JavaScript"]]
+
+    def row(self, blocks):
+        """The track's row, in the section's list."""
+        return next(b for b in self.section(blocks)["blocks"] if b["type"] == "list")["items"][0]
 
     def section(self, blocks):
         return next(b for b in blocks if b["type"] == "section")
@@ -93,9 +110,11 @@ class NowPlayingTests(ExtensionTestCase):
     def test_a_youtube_tab_counts(self):
         self.scene(now=youtube())
         self.assertEqual(self.bar()["text"], "♫ Lokko - Min fejn jien…", "too long with the artist: the title alone, cut")
-        section = self.section(self.popover())
-        self.assertEqual((section["title"], section["subtitle"], section["aside"]),
+        blocks = self.popover()
+        row = self.row(blocks)
+        self.assertEqual((row["title"], row["subtitle"], self.section(blocks)["aside"]),
                          ("Lokko - Min fejn jien ( official music video )", "LOKKO MUSIK", "Google Chrome"))
+        self.assertEqual(row["actions"], [{"type": "run", "command": "show", "title": "Show in Google Chrome"}])
 
     def test_playing_shows_artist_and_title(self):
         self.scene(now=playing())
@@ -135,9 +154,12 @@ class NowPlayingTests(ExtensionTestCase):
         message = self.blocks_message("bar", "popover")
         self.assertEqual(message["refresh"], 5)
         section = self.section(message["blocks"])
-        self.assertEqual((section["title"], section["subtitle"], section["aside"]), ("Voyager", "Daft Punk · Discovery", "Music"))
+        row = self.row(message["blocks"])
+        self.assertEqual((row["title"], row["subtitle"], row["icon"], section["aside"]), ("Voyager", "Daft Punk", "🎵", "Music"))
+        self.assertNotIn("badges", row, "a badge would move the artist under the title")
+        self.assertNotIn("image", row, "no artwork: the emoji")
         self.assertNotIn("asideNote", section)
-        meter = section["blocks"][0]
+        meter = section["blocks"][1]
         self.assertEqual((meter["label"], meter["value"], meter["percent"]), ("1:20", "/ 5:20", 25.0),
                          "elapsed 70 s as of its stamp, 10 s ago")
         self.assertEqual([a["title"] for a in self.actions(message["blocks"])],
@@ -149,7 +171,7 @@ class NowPlayingTests(ExtensionTestCase):
         self.assertEqual(message["refresh"], 15)
         section = self.section(message["blocks"])
         self.assertEqual(section["asideNote"], "Paused")
-        self.assertEqual(section["blocks"][0]["label"], "0:35", "paused: no time added since its stamp")
+        self.assertEqual(section["blocks"][1]["label"], "0:35", "paused: no time added since its stamp")
         self.assertEqual([a["title"] for a in self.actions(message["blocks"])], ["▶︎ Play", "⏮︎", "⏭︎"],
                          "Favourite only while Music plays")
 
@@ -160,7 +182,7 @@ class NowPlayingTests(ExtensionTestCase):
 
     def test_a_live_stream_has_no_meter(self):
         self.scene(now=youtube(duration=None))
-        self.assertEqual(self.section(self.popover())["blocks"][0]["type"], "buttons")
+        self.assertEqual(self.section(self.popover())["blocks"][1]["type"], "buttons")
 
     def test_nothing_played_popover_says_so(self):
         self.assertIn("Nothing is playing", self.popover()[0]["text"])
@@ -208,9 +230,62 @@ class NowPlayingTests(ExtensionTestCase):
         self.assertTrue(detail["markdown"].startswith("# Lokko - Min fejn jien"), detail["markdown"])
         self.assertIn({"label": "Playing in", "text": "Google Chrome"}, detail["metadata"])
         self.assertIn({"label": "Position", "text": "1:20 / 2:52"}, detail["metadata"])
-        self.assertEqual([a["title"] for a in detail["actions"]], ["Pause", "Previous track", "Next track"])
+        self.assertEqual([a["title"] for a in detail["actions"]], ["Pause", "Previous track", "Next track", "Show in Google Chrome"])
         for action in detail["actions"]:
             self.assertActionShape(action)
+
+    # ---- artwork and going to what plays ----
+
+    def test_the_artwork_is_a_thumbnail_made_once_a_track(self):
+        self.box.shim("sips", 'printf "%%s\\n" "sips $*" >> "%s"; cp "$6" "$8"' % self.box.log)
+        self.scene(now=playing(), art="JPEGBYTES")
+        row = self.row(self.popover())
+        self.assertEqual(base64.b64decode(row["image"]), b"JPEGBYTES")
+        self.popover()
+        sips = [c for c in self.box.shim_calls() if c.startswith("sips ")]
+        self.assertEqual(len(sips), 1, "made once, kept for the next look")
+        self.assertIn("-Z 64 -s format jpeg", sips[0])
+        self.scene(now=playing(title="Digital Love"), art="OTHER")
+        self.assertEqual(base64.b64decode(self.row(self.popover())["image"]), b"OTHER")
+        self.assertEqual(sorted(p.name for p in self.box.cache.iterdir()), ["art-dig.img", "art-dig.jpg"], "the last track's removed")
+
+    def test_artwork_sips_cannot_read_leaves_the_emoji(self):
+        self.box.shim("sips", "exit 1")
+        self.scene(now=playing(), art="NOT AN IMAGE")
+        row = self.row(self.popover())
+        self.assertNotIn("image", row)
+        self.assertEqual(row["icon"], "🎵")
+
+    def test_show_brings_the_browser_tab_that_plays_forward(self):
+        self.box.shim("open")
+        self.scene(now=youtube())
+        self.assertEqual(self.run_ext("show").messages, [])
+        [tab] = self.apple_events()
+        self.assertIn('application id "com.google.Chrome"', tab[1])
+        self.assertIn("active tab index", tab[1])
+        self.assertEqual(tab[2], "Lokko - Min fejn jien ( official music video )")
+        self.assertEqual(self.box.shim_calls(), [], "the tab was found: nothing opened")
+
+    def test_show_activates_an_app_with_no_tabs(self):
+        self.box.shim("open")
+        self.scene(now=playing(app="Spotify", bundle="com.spotify.client"))
+        self.run_ext("show")
+        self.assertEqual(self.apple_events(), [])
+        self.assertEqual(self.box.shim_calls(), ["open -b com.spotify.client"])
+
+    def test_show_without_leave_to_control_the_browser_still_brings_it_forward_and_says_how(self):
+        self.box.shim("open")
+        self.scene(now=youtube(), denyTab=True)
+        hud = self.run_ext("show").of_type("hud")[0]["text"]
+        self.assertIn("Automation", hud)
+        self.assertIn("Google Chrome", hud)
+        self.assertEqual(self.box.shim_calls(), ["open -b com.google.Chrome"])
+
+    def test_show_when_the_browser_quit_meanwhile_starts_nothing(self):
+        self.box.shim("open")
+        self.scene(now=youtube(), tab="gone")
+        self.assertEqual(self.run_ext("show").of_type("hud")[0]["text"], "Google Chrome is no longer open")
+        self.assertEqual(self.box.shim_calls(), [], "never starts a player")
 
     def test_now_playing_view_with_nothing_played_says_so(self):
         self.assertIn("Nothing is playing", self.run_ext("now").detail["markdown"])

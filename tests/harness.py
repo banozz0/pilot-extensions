@@ -9,6 +9,7 @@ Two test-only additions, both prepended to PATH after the program's folder: a `s
 names an interpreter (e.g. /usr/bin/python3, macOS's 3.9), a `python3` that runs it, so every program is proven on
 the oldest Python a Mac ships.
 """
+import base64
 import functools
 import importlib.util
 import json
@@ -198,6 +199,8 @@ class ExtensionTestCase(unittest.TestCase):
                 self.assertIsInstance(badge.get("text"), str)
                 self.assertIn(badge.get("tone"), self.TONES)
             self.assertLessEqual(len(item.get("inline", [])), 3)
+            if "image" in item:  # Pilot 2026-10-16: a row's picture, base64, up to 64 KB
+                self.assertLessEqual(len(base64.b64decode(item["image"], validate=True)), 64 * 1024)
             for action in item.get("inline", []):
                 self.assertActionShape(action, ITEM_ACTIONS)
                 self.assertTrue(action.get("icon") in INLINE_ICONS or check.is_emoji(action.get("icon")), action)

@@ -2,11 +2,11 @@
   "id": "now-playing",
   "title": "Now playing",
   "icon": "🎵",
-  "version": "1.1.0",
-  "description": "Whatever your Mac is playing, in the menu bar, as Control Center's Now Playing sees it: Music, Spotify, a YouTube tab in Chrome, Safari or Zen, any app. Click it for the track, how far in, play or pause, previous and next; Favourite while Music plays. Never starts a player, and asks no permission (Favourite asks once to control Music).",
-  "examples": ["A YouTube video plays in Chrome: the menu bar shows ♫ and its title; a lone ♫ while paused, nothing when nothing has played", "Click it or type now playing: where it plays, a progress bar, Pause, Previous and Next (Favourite while Music plays, Copy link for a Spotify track)"],
+  "version": "1.2.0",
+  "description": "Whatever your Mac is playing, in the menu bar, as Control Center's Now Playing sees it: Music, Spotify, a YouTube tab in Chrome, Safari or Zen, any app. Click it for the track with its artwork and artist, how far in, play or pause, previous and next; Favourite while Music plays. Click the track to go to the tab or app playing it. Never starts a player; going to a browser tab asks once to control that browser, Favourite once to control Music.",
+  "examples": ["A YouTube video plays in Chrome: the menu bar shows ♫ and its title; a lone ♫ while paused, nothing when nothing has played", "Click it, then the track: Chrome comes forward on the YouTube tab that plays it"],
   "runtime": "process",
-  "requires": ["python3", "osascript"],
+  "requires": ["python3", "osascript", "sips", "open"],
   "permissions": {},
   "preferences": [
     { "name": "bar", "type": "dropdown", "title": "Menu bar shows", "default": "artist-title",
@@ -20,6 +20,7 @@
     { "name": "next", "title": "Next track", "icon": "⏭️", "mode": "no-view", "run": "main.py" },
     { "name": "previous", "title": "Previous track", "icon": "⏮️", "mode": "no-view", "run": "main.py" },
     { "name": "favourite", "title": "Favourite this Music track", "icon": "❤️", "mode": "no-view", "run": "main.py" },
+    { "name": "show", "title": "Go to what's playing", "icon": "🎯", "mode": "no-view", "run": "main.py" },
     { "name": "bar", "title": "Now playing in the menu bar", "mode": "no-view", "hidden": true, "run": "main.py" }
   ]
 }

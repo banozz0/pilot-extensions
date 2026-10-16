@@ -11,8 +11,15 @@ is ever started. Should a macOS update close that door, the item says so with a 
 
 Favourite is the one thing Now Playing can't do: it shows only while Music plays, and asks Music itself (its favorited
 track property, «class pLov»), which raises macOS's Automation prompt once. A Spotify track carries its link instead.
+
+The popover's track is a row: its artwork (Now Playing's own, written once a track to the cache and shrunk by macOS's
+sips to a thumbnail Pilot draws in the row) with the title and the artist beside it; a click goes to what plays. In
+Chrome, its kin (Brave, Edge, Vivaldi) and Safari that is the tab whose title holds the track's, asked of the browser
+itself (macOS asks once whether Pilot may control it); anywhere else, the app.
 """
+import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -27,20 +34,23 @@ BAR_ROOM = 24 - 2  # Pilot's bar text is 24 characters; "♫ " takes two
 MUSIC = "com.apple.Music"
 COMMANDS = {"playpause": 2, "next": 4, "previous": 5}  # MediaRemote's MRMediaRemoteCommand
 VERBS = {"playpause": "play or pause", "next": "skip", "previous": "go back to", "favourite": "favourite"}
+THUMB = 64  # the artwork's longest side in pixels: Pilot draws it at 28 points, twice that on a Retina screen
+LARGEST_THUMB = 64 * 1024  # Pilot keeps a row's picture up to 64 KB
 # A bar title without what only clutters it (Raycast's Spotify Player cleans the same way): (feat. …), […], remasters.
 CLUTTER = re.compile(r"\s*(\((feat|ft|with)\.?\s[^)]*\)|\[[^\]]*\]|\([^)]*remaster[^)]*\)|\s-\s[^-]*remaster.*$)", re.I)
 
-# The read, after an optional command (argv[0], then SETTLE s for the player to move): one JSON object, {} when nothing
-# has played, {"error"} when Now Playing can't be read.
+# The read, after an optional command (argv[1], then SETTLE s for the player to move): one JSON object, {} when nothing
+# has played, {"error"} when Now Playing can't be read. argv[0], when not empty, is a folder for the artwork: its file is
+# art-<a hash of the track>.img, written only when missing, and named in the answer's `artwork`.
 NOW_PLAYING = '''function run(argv) {
 	ObjC.import('Foundation');
 	if (!$.NSBundle.bundleWithPath('/System/Library/PrivateFrameworks/MediaRemote.framework/').load)
 		return JSON.stringify({error: 'MediaRemote did not load'});
 	const request = $.NSClassFromString('MRNowPlayingRequest');
 	if (!request || request.isNil()) return JSON.stringify({error: 'no MRNowPlayingRequest'});
-	if (argv.length) {
+	if (argv.length > 1) {
 		ObjC.bindFunction('MRMediaRemoteSendCommand', ['bool', ['int', 'id']]);
-		$.MRMediaRemoteSendCommand(Number(argv[0]), $());
+		$.MRMediaRemoteSendCommand(Number(argv[1]), $());
 		delay(%s);
 	}
 	const item = request.localNowPlayingItem;
@@ -62,6 +72,16 @@ NOW_PLAYING = '''function run(argv) {
 		found.app = ObjC.unwrap(client.displayName);
 		found.bundle = ObjC.unwrap(client.bundleIdentifier);
 	} catch (e) {}
+	const art = field('ArtworkData');
+	if (argv[0] && art) {
+		let hash = 5381;
+		const key = [found.Title, found.Artist, found.Album, found.bundle, art.length].join('|');
+		for (let i = 0; i < key.length; i++) hash = (hash * 33 + key.charCodeAt(i)) >>> 0;
+		const name = 'art-' + hash.toString(16) + '.img';
+		const path = argv[0] + '/' + name;
+		if (!$.NSFileManager.defaultManager.fileExistsAtPath(path)) art.writeToFileAtomically(path, true);
+		found.artwork = name;
+	}
 	return JSON.stringify(found);
 }''' % SETTLE
 
@@ -112,10 +132,11 @@ def seconds(value):
     return max(float(value), 0.0) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def now_playing(deadline, command=None):
+def now_playing(deadline, command=None, art=""):
     """What the Mac plays as a dict (app, bundle, playing, title, artist, album, duration and position in seconds or
-    None, item), or None when nothing has played; `command`, one of COMMANDS, is sent first."""
-    args = ["-l", "JavaScript", "-e", NOW_PLAYING] + ([str(COMMANDS[command])] if command else [])
+    None, item, its artwork's file in `art` or None), or None when nothing has played; `command`, one of COMMANDS, is
+    sent first."""
+    args = ["-l", "JavaScript", "-e", NOW_PLAYING, art] + ([str(COMMANDS[command])] if command else [])
     try:
         found = json.loads(osascript(args, deadline) or "{}")
     except ValueError:
@@ -137,7 +158,41 @@ def now_playing(deadline, command=None):
     return {"app": text(found.get("app")) or "Now Playing", "bundle": text(found.get("bundle")), "playing": playing,
             "title": title, "artist": text(found.get("Artist")), "album": text(found.get("Album")),
             "duration": int(duration) if duration else None, "position": int(elapsed),
-            "item": text(found.get("ContentItemIdentifier"))}
+            "item": text(found.get("ContentItemIdentifier")),
+            "artwork": os.path.join(art, os.path.basename(found["artwork"])) if art and text(found.get("artwork")) else None}
+
+
+def thumbnail(track, deadline):
+    """The track's artwork as a small JPEG in base64, made once a track by sips beside the artwork (the other tracks'
+    files removed); None without artwork, or when sips fails or runs out of time."""
+    source = track.get("artwork")
+    if not source or not os.path.isfile(source):
+        return None
+    folder, name = os.path.split(source)
+    thumb = os.path.join(folder, name[:-len(".img")] + ".jpg")
+    if not os.path.isfile(thumb):
+        sips = shutil.which("sips") or "/usr/bin/sips"
+        try:
+            done = subprocess.run([sips, "-Z", str(THUMB), "-s", "format", "jpeg", source, "--out", thumb],
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  timeout=max(deadline - time.monotonic(), 0.1))
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if done.returncode != 0:
+            return None
+        keep = {name, os.path.basename(thumb)}
+        for other in os.listdir(folder):
+            if other.startswith("art-") and other not in keep:
+                try:
+                    os.remove(os.path.join(folder, other))
+                except OSError:
+                    pass
+    try:
+        with open(thumb, "rb") as f:
+            data = f.read(LARGEST_THUMB + 1)
+    except OSError:
+        return None
+    return base64.b64encode(data).decode("ascii") if data and len(data) <= LARGEST_THUMB else None
 
 
 # ---- words ----
@@ -180,13 +235,13 @@ def share_link(track):
     return "https://open.spotify.com/track/%s" % match.group(1) if match else None
 
 
-def trouble_words(trouble):
+def trouble_words(trouble, app="Music"):
     if trouble.why == "closed":
         return "This macOS doesn't share what's playing with Pilot (Now Playing is closed to it)."
     if trouble.why == "denied":
-        return "macOS doesn't let Pilot control Music: allow it in System Settings › Privacy & Security › Automation › Pilot."
+        return "macOS doesn't let Pilot control %s: allow it in System Settings › Privacy & Security › Automation › Pilot." % app
     if trouble.why == "slow":
-        return "Now Playing did not answer in time; if macOS asks whether Pilot may control Music, choose Allow."
+        return "Now Playing did not answer in time; if macOS asks whether Pilot may control %s, choose Allow." % app
     return "Now Playing did not answer."
 
 
@@ -208,11 +263,28 @@ def buttons(track, words=False):
     return found
 
 
-def track_section(track):
-    section = {"type": "section", "title": track["title"] or "Playing", "subtitle": byline(track), "aside": track["app"]}
+def show_action(track):
+    return {"type": "run", "command": "show", "title": "Show in %s" % track["app"]}
+
+
+def track_row(track, image):
+    """The track as a row: its artwork (or ♫'s emoji), the title, the artist beside it; a click goes to what plays. No
+    badge, so Pilot keeps the artist on the title's line."""
+    row = {"id": track["item"] or "track", "title": track["title"] or "Playing", "icon": "🎵",
+           "keywords": " ".join(p for p in (track["artist"], track["album"], track["app"]) if p), "actions": [show_action(track)]}
+    if track["artist"]:
+        row["subtitle"] = track["artist"]
+    if image:
+        row["image"] = image
+    return row
+
+
+def track_section(track, image=None):
+    """Where it plays (Paused beside it while paused) over the track's row, how far in, and the controls."""
+    section = {"type": "section", "aside": track["app"]}
     if not track["playing"]:
         section["asideNote"] = "Paused"
-    inner = []
+    inner = [{"type": "list", "items": [track_row(track, image)]}]
     if track["duration"]:
         inner.append({"type": "meter", "label": clock(track["position"]), "value": "/ %s" % clock(track["duration"]),
                       "percent": round(100.0 * track["position"] / track["duration"], 1)})
@@ -227,20 +299,33 @@ def drawable(run, blocks):
     return [b if b["type"] != "note" or "note" in listed else {"type": "markdown", "text": b["text"]} for b in blocks]
 
 
-def answer(run, budget):
-    """(what plays or None, its blocks, the trouble or None)."""
+def art_folder(run):
+    """Pilot's cache folder for the artwork, made on first use; "" without one (no artwork then)."""
+    folder = (run.get("paths") or {}).get("cache")
+    if not isinstance(folder, str) or not folder:
+        return ""
     try:
-        track = now_playing(time.monotonic() + budget)
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
+        return ""
+    return folder
+
+
+def answer(run, budget, art=True):
+    """(what plays or None, its blocks, the trouble or None); `art` reads the artwork, which only the popover shows."""
+    deadline = time.monotonic() + budget
+    try:
+        track = now_playing(deadline, art=art_folder(run) if art else "")
     except Trouble as trouble:
         return None, drawable(run, [{"type": "note", "text": trouble_words(trouble), "icon": "info"}]), trouble
     if track is None:
         return None, [{"type": "markdown", "text": "Nothing is playing: play something in any app or browser tab."}], None
-    return track, [track_section(track)], None
+    return track, [track_section(track, thumbnail(track, deadline))], None
 
 
 def bar(run):
     popover = run.get("surface") == "popover"
-    track, blocks, trouble = answer(run, BUDGET["popover" if popover else "bar"])
+    track, blocks, trouble = answer(run, BUDGET["popover" if popover else "bar"], art=popover)
     if popover:
         playing = track is not None and track["playing"]
         send({"type": "blocks", "blocks": blocks, "refresh": REFRESH["playing" if playing else "idle"]})
@@ -255,7 +340,7 @@ def bar(run):
 
 def detail(run):
     """Hyper+Space's Now playing: the track, how far in, and the controls on Return and Cmd+K."""
-    track, blocks, trouble = answer(run, BUDGET["detail"])
+    track, blocks, trouble = answer(run, BUDGET["detail"], art=False)
     if trouble or track is None:
         send({"type": "detail", "markdown": blocks[0]["text"]})
         return
@@ -264,10 +349,76 @@ def detail(run):
                 {"label": "State", "text": "Playing" if track["playing"] else "Paused"}]
     if track["duration"]:
         metadata.append({"label": "Position", "text": "%s / %s" % (clock(track["position"]), clock(track["duration"]))})
-    send({"type": "detail", "markdown": "\n".join(lines), "metadata": metadata, "actions": buttons(track, words=True)})
+    send({"type": "detail", "markdown": "\n".join(lines), "metadata": metadata,
+          "actions": buttons(track, words=True) + [show_action(track)]})
 
 
 # ---- the controls ----
+
+# A browser's tab by its title: the first whose title holds the track's comes to the front in its window, the window
+# to the front, the browser active; "app" when none holds it (the browser is still brought forward), "gone" when the
+# browser quit meanwhile, so the tell never starts it. Chromium's tabs have a title and an active tab index, Safari's
+# a name and a current tab.
+TAB_SCRIPT = '''on run argv
+	if not (application id "%(bundle)s" is running) then return "gone"
+	set wanted to item 1 of argv
+	tell application id "%(bundle)s"
+		repeat with w in windows
+			set i to 0
+			repeat with t in tabs of w
+				set i to i + 1
+				if %(name)s of t contains wanted then
+					%(select)s
+					set index of w to 1
+					activate
+					return "tab"
+				end if
+			end repeat
+		end repeat
+		activate
+	end tell
+	return "app"
+end run'''
+CHROMIUM = {"name": "title", "select": "set active tab index of w to i"}
+# The browsers whose tabs can be picked by title, by bundle id, each its script.
+TABS = {bundle: TAB_SCRIPT % dict(words, bundle=bundle) for bundle, words in (
+    ("com.google.Chrome", CHROMIUM), ("com.brave.Browser", CHROMIUM), ("com.microsoft.edgemac", CHROMIUM),
+    ("com.vivaldi.Vivaldi", CHROMIUM), ("com.apple.Safari", {"name": "name", "select": "set current tab of w to t"}))}
+
+
+def open_app(bundle):
+    binary = shutil.which("open") or "/usr/bin/open"
+    try:
+        return subprocess.run([binary, "-b", bundle], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def show():
+    """Goes to what plays: a browser's tab that holds the track's title, else the app playing it."""
+    deadline = time.monotonic() + BUDGET["control"]
+    try:
+        track = now_playing(deadline)
+    except Trouble as trouble:
+        send({"type": "error", "text": trouble_words(trouble)})
+        return
+    if track is None or not track["bundle"]:
+        send({"type": "hud", "text": "Nothing is playing" if track is None else "Can't tell which app plays %s" % spoken(track)})
+        return
+    script = TABS.get(track["bundle"])
+    if script and track["title"]:
+        try:
+            if osascript(["-e", script, track["title"]], deadline) == "gone":
+                send({"type": "hud", "text": "%s is no longer open" % track["app"]})  # opening it would start a player
+            return
+        except Trouble as trouble:
+            if trouble.why == "denied":
+                open_app(track["bundle"])
+                send({"type": "hud", "text": "To go to the tab: " + trouble_words(trouble, track["app"])})
+                return
+    if not open_app(track["bundle"]):
+        send({"type": "hud", "text": "Can't bring %s forward" % track["app"]})
 
 def control(run, verb):
     """Sends `verb` to whatever plays, then says what plays now; Favourite asks Music, only while it is what plays."""
@@ -312,6 +463,8 @@ def main():
         detail(run)
     elif command in VERBS:
         control(run, command)
+    elif command == "show":
+        show()
     else:
         send({"type": "error", "text": "Now playing has no command %s" % command})
 
