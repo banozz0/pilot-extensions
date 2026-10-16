@@ -344,11 +344,11 @@
       "id": "markets",
       "title": "Markets",
       "icon": "📈",
-      "version": "1.1.1",
-      "description": "Stocks, ETFs and coins and their day's change in the menu bar, as text, with the day's line or as mini bars, one symbol, several side by side or in turn; click it for every symbol you follow with its price, its change and its line, each a click from its page on TradingView. Free data from TradingView, or Nasdaq and CoinGecko, in euros or your currency, no account or key.",
+      "version": "1.2.0",
+      "description": "Stocks, ETFs and coins and their day's change in the menu bar, as text, with the day's line or as mini bars, one symbol, several side by side or in turn; click it for every symbol you follow with its price, its change and its line, each a click from its page on TradingView. Search TradingView as on its site (BTC, AAPL, EURUSD, SPX) to add stocks, funds, coin and currency pairs, indices and futures, and order or remove them on the page. Free data from TradingView, or Nasdaq and CoinGecko, in euros or your currency, no account or key.",
       "examples": [
         "The menu bar shows SPY ▲0.28% · BTC ▲1.4%: click it for every symbol with its price and the day's line",
-        "Type markets: every symbol as a row; Return opens it on TradingView"
+        "Type Add to Markets, then eurusd: Return on FX:EURUSD adds it; on the Markets page ↑ ↓ × order and remove"
       ],
       "requires": [
         "python3",
@@ -359,11 +359,17 @@
           "name": "markets",
           "title": "Markets",
           "mode": "list"
+        },
+        {
+          "name": "search",
+          "title": "Add to Markets",
+          "mode": "list"
         }
       ],
       "permissions": {
         "network": [
           "scanner.tradingview.com",
+          "symbol-search.tradingview.com",
           "api.nasdaq.com",
           "api.coingecko.com",
           "api.frankfurter.dev"
@@ -375,14 +381,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "b963f31a1d25104118c2278b236cc85596d0c2608736f86b857a74c65428e05f",
-          "size": 4035,
+          "sha256": "928e9ecda5bae3abad227f486e7fd3c4a4c035469086efd1668392d3df9976d9",
+          "size": 5048,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "344d4ba1d4b275e8b67d0b59f350c74959d1802f2c9d16da740116b562e06515",
-          "size": 47537,
+          "sha256": "1e0b6b97d8996ae55e6d66aa08626419dda57ad59644c42868500a8b8d1f7f86",
+          "size": 66719,
           "executable": true
         }
       ]

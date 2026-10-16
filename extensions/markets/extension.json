@@ -2,15 +2,15 @@
   "id": "markets",
   "title": "Markets",
   "icon": "📈",
-  "version": "1.1.1",
-  "description": "Stocks, ETFs and coins and their day's change in the menu bar, as text, with the day's line or as mini bars, one symbol, several side by side or in turn; click it for every symbol you follow with its price, its change and its line, each a click from its page on TradingView. Free data from TradingView, or Nasdaq and CoinGecko, in euros or your currency, no account or key.",
-  "examples": ["The menu bar shows SPY ▲0.28% · BTC ▲1.4%: click it for every symbol with its price and the day's line", "Type markets: every symbol as a row; Return opens it on TradingView"],
+  "version": "1.2.0",
+  "description": "Stocks, ETFs and coins and their day's change in the menu bar, as text, with the day's line or as mini bars, one symbol, several side by side or in turn; click it for every symbol you follow with its price, its change and its line, each a click from its page on TradingView. Search TradingView as on its site (BTC, AAPL, EURUSD, SPX) to add stocks, funds, coin and currency pairs, indices and futures, and order or remove them on the page. Free data from TradingView, or Nasdaq and CoinGecko, in euros or your currency, no account or key.",
+  "examples": ["The menu bar shows SPY ▲0.28% · BTC ▲1.4%: click it for every symbol with its price and the day's line", "Type Add to Markets, then eurusd: Return on FX:EURUSD adds it; on the Markets page ↑ ↓ × order and remove"],
   "runtime": "process",
   "requires": ["python3", "curl"],
-  "permissions": { "network": ["scanner.tradingview.com", "api.nasdaq.com", "api.coingecko.com", "api.frankfurter.dev"] },
+  "permissions": { "network": ["scanner.tradingview.com", "symbol-search.tradingview.com", "api.nasdaq.com", "api.coingecko.com", "api.frankfurter.dev"] },
   "preferences": [
     { "name": "symbols", "type": "text", "title": "Symbols", "default": "SPY, AAPL, BTC, ETH",
-      "description": "Tickers and coin symbols, in the order shown, up to 12. A bare ticker is its most traded listing; with TradingView write XETR:VWCE for one exchange's. BTC, ETH, SOL and other big coins are known; write coin:XYZ for another coin, stock:XYZ for a stock that shares a coin's symbol." },
+      "description": "The symbols to start from, in the order shown, up to 12; Markets' search (its page, or Add to Markets in Hyper+Space) then adds, moves and removes them, and an edit here replaces that list. A bare ticker is its most traded listing; with TradingView write XETR:VWCE for one exchange's. BTC, ETH, SOL and other big coins are known; write coin:XYZ for another coin, stock:XYZ for a stock that shares a coin's symbol." },
     { "name": "source", "type": "dropdown", "title": "Prices from", "default": "tradingview",
       "description": "Where prices come from; a row opens the symbol's page there. TradingView draws a row's line from the prices read through the day, so it fills in over the first hours.",
       "data": [ { "title": "TradingView (stocks and ETFs anywhere, coins)", "value": "tradingview" },
@@ -36,8 +36,14 @@
   "surfaces": { "page": { "command": "page", "every": 120 }, "bar": { "command": "bar", "every": 60 } },
   "commands": [
     { "name": "markets", "title": "Markets", "mode": "list", "run": "main.py" },
+    { "name": "search", "title": "Add to Markets", "mode": "list", "filter": "self", "run": "main.py" },
     { "name": "bar", "title": "Markets in the menu bar", "mode": "no-view", "hidden": true, "run": "main.py" },
     { "name": "page", "title": "Markets page", "mode": "no-view", "hidden": true, "run": "main.py" },
-    { "name": "refresh", "title": "Refresh the prices", "mode": "no-view", "hidden": true, "run": "main.py" }
+    { "name": "refresh", "title": "Refresh the prices", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "find", "title": "Search TradingView", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "clear-search", "title": "Close the search", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "add", "title": "Add a symbol", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "remove", "title": "Remove a symbol", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "move", "title": "Move a symbol", "mode": "no-view", "hidden": true, "run": "main.py" }
   ]
 }

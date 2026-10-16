@@ -30,7 +30,9 @@ TIMEOUTS = {"list": 2.0, "detail": 2.0, "no-view": 30.0, "page": 5.0, "bar": 2.0
 ITEM_ACTIONS = {"open": "url", "copy": "text", "paste": "text", "push": "command", "run": "command", "hud": "text",
                 "pilot": "action"}
 ACTIONS = dict(ITEM_ACTIONS, timer="seconds", alert="text")
-INLINE_ICONS = {"bubble", "moon", "sun", "pencil", "tag", "xmark", "arrow.up", "arrow.down", "terminal", "refresh"}
+# Pilot's Extension.Item.Action.icons: one list for an inline button, a note and a link (chart, plus, reset, info: Q138).
+INLINE_ICONS = {"bubble", "moon", "sun", "pencil", "tag", "xmark", "arrow.up", "arrow.down", "terminal", "refresh", "chart",
+                "plus", "reset", "info"}
 
 _spec = importlib.util.spec_from_file_location("check", ROOT / "scripts" / "check.py")
 check = importlib.util.module_from_spec(_spec)

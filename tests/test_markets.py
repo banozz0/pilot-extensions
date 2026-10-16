@@ -73,7 +73,31 @@ COIN_ROWS = [tv("MEXC:BTCEUR", "BTCEUR", 73000.0, 1.0, 730.0, 73500.0, 72000.0, 
              tv("BITSTAMP:BTCEUR", "BTCEUR", 73116.65, -0.1739, -127.35, 73573.92, 72540.0, "Bitcoin / Euro", "EUR", "spot"),
              tv("KRAKEN:BTCEUR", "BTCEUR", 73120.4, -0.17, -124.0, 73580.0, 72550.0, "Bitcoin / Euro", "EUR", "spot"),
              tv("KRAKEN:ETHEUR", "ETHEUR", 2197.15, 0.9669, 21.04, 2213.09, 2159.76, "Ethereum / Euro", "EUR", "spot")]
-FIXTURES.update({"tv-global": {"totalCount": 5, "data": STOCK_ROWS}, "tv-crypto": {"totalCount": 4, "data": COIN_ROWS}})
+PAIR_ROWS = [tv("FX:EURUSD", "EURUSD", 1.12385, 0.12, 0.00135, 1.1251, 1.1219, "Euro / U.S. Dollar", "USD", "forex"),
+             tv("SP:SPX", "SPX", 7659.44, 0.31, 23.6, 7670.1, 7620.0, "S&P 500 Index", None, "index"),
+             tv("BITSTAMP:BTCUSD", "BTCUSD", 81609.58, 1.2, 967.5, 82100.0, 80200.0, "Bitcoin / U.S. dollar", "USD", "spot")]
+
+
+def found(symbol, description, kind, prefix, place, specs=None, contracts=None):
+    """A row of TradingView's symbol search as it answers (recorded for "BTC" on 2026-10-16, trimmed), its match
+    highlighted."""
+    row = {"symbol": symbol, "description": description, "type": kind, "exchange": place, "currency_code": "USD",
+           "source2": {"id": prefix, "name": place, "description": place}, "source_id": prefix, "typespecs": specs or []}
+    if contracts:
+        row["contracts"] = contracts
+    return row
+
+
+SEARCH = {"symbols_remaining": 7453, "symbols": [
+    dict(found("<em>BTCUSD</em>", "<em>Bitcoin</em> / U.S. dollar", "spot", "BITSTAMP", "Bitstamp", ["crypto"]), prefix="BITSTAMP"),
+    dict(found("<em>BTCUSD</em>", "<em>Bitcoin</em> / US Dollar", "spot", "COINBASE", "Coinbase", ["crypto"]), prefix="COINBASE"),
+    found("<em>BTCUSD</em>", "<em>Bitcoin</em> all time history index", "index", "INDEX", "INDEX", ["crypto", "synthetic"]),
+    found("<em>BTC</em>", "<em>Bitcoin</em> Futures", "futures", "CME", "CME", None,
+          [{"symbol": "<em>BTC</em>1!", "typespecs": ["continuous", "synthetic"]}, {"symbol": "<em>BTC</em>V2026", "description": "Oct 2026"}]),
+    found("<em>BTC</em>", "Grayscale Bitcoin Mini Trust (<em>BTC</em>)", "fund", "AMEX", "NYSE American", ["etf"]),
+    found("<em>BTC</em>", "London <em>BTC</em> Company Limited", "stock", "LSE", "London Stock Exchange", ["common"])]}
+FIXTURES.update({"tv-global": {"totalCount": 8, "data": STOCK_ROWS + PAIR_ROWS}, "tv-crypto": {"totalCount": 4, "data": COIN_ROWS},
+                 "tv-search": SEARCH})
 
 
 class MarketsCase(ExtensionTestCase):
@@ -108,6 +132,7 @@ class MarketsCase(ExtensionTestCase):
             body += 'echo "curl: %s" >&2; exit 6' % fail
         else:
             body += ('case "$url" in\n'
+                     '  *symbol-search.tradingview.com/*) f=tv-search;;\n'
                      '  *scanner.tradingview.com/global/scan) f=tv-global;; *scanner.tradingview.com/crypto/scan) f=tv-crypto;;\n'
                      '  *api.nasdaq.com/api/quote/*) s=${url#*/api/quote/}; s=${s%%%%/*}; f="nasdaq-$s-${url##*assetclass=}";;\n'
                      '  *coins/markets*) f=markets;; *api/v3/search*) f=search;; *frankfurter*) f=fx;; *) f=none;;\n'
@@ -131,6 +156,8 @@ class MarketsCase(ExtensionTestCase):
         for host, path, query, args in self.calls()[since:]:
             if host == "api.nasdaq.com":
                 short.append("%s/%s" % (path.split("/")[3], query["assetclass"]))
+            elif host == "symbol-search.tradingview.com":
+                short.append("tv-search")
             elif host == "scanner.tradingview.com":
                 short.append("tv-%s-%s" % (path.split("/")[1], "find" if "in_range" in args else "tickers"))
             else:
@@ -285,9 +312,9 @@ class NasdaqTests(MarketsCase):
 
     def test_page_adds_refresh_and_the_credit(self):
         blocks = self.page(pilot=self.PILOT)
-        self.assertEqual([b["type"] for b in blocks], ["hero", "list", "note", "buttons", "markdown"])
-        self.assertEqual(blocks[3]["actions"][0]["command"], "refresh")
-        self.assertIn("ECB", blocks[4]["text"])
+        self.assertEqual([b["type"] for b in blocks], ["input", "hero", "list", "note", "buttons", "markdown"])
+        self.assertEqual(blocks[4]["actions"][0]["command"], "refresh")
+        self.assertIn("ECB", blocks[5]["text"])
 
     def test_no_symbols_says_where_to_add_them(self):
         line = self.bar(preferences={"symbols": " , ; "})
@@ -298,7 +325,8 @@ class NasdaqTests(MarketsCase):
     def test_hyper_space_lists_the_rows_then_refresh(self):
         items = self.run_ext("markets").items
         self.assertItemShape(items)
-        self.assertEqual([i["id"] for i in items], ["stock:SPY", "stock:AAPL", "coin:BTC", "coin:ETH", "refresh"])
+        self.assertEqual([i["id"] for i in items], ["stock:SPY", "stock:AAPL", "coin:BTC", "coin:ETH", "search", "refresh"])
+        self.assertEqual(items[-2]["actions"][0], {"type": "push", "command": "search", "title": "Search TradingView"})
         self.assertEqual(items[-1]["actions"][0]["command"], "refresh")
 
     def test_refresh_asks_everything_again_and_says_the_moves(self):
@@ -409,6 +437,133 @@ class BarTests(MarketsCase):
         self.assertNotIn("label", line["gauges"][0])
 
 
+EURUSD = {"kind": "pair", "symbol": "EURUSD", "listing": "FX:EURUSD", "type": "forex", "name": "Euro / U.S. Dollar"}
+SPX = {"kind": "pair", "symbol": "SPX", "listing": "SP:SPX", "type": "index"}
+
+
+class SearchTests(MarketsCase):
+    """TradingView's symbol search adds to the list followed, which the page orders and trims (Sven Q192)."""
+
+    def watched(self):
+        return [s["key"] for s in json.loads((self.box.data / "watchlist.json").read_text())["symbols"]]
+
+    def add(self, symbol, **kwargs):
+        return self.run_ext("add", context={"symbol": symbol}, **kwargs)
+
+    def hud(self, result):
+        self.assertEqual(result.of_type("error"), [], result.stdout)
+        return result.of_type("hud")[0]["text"]
+
+    def test_the_old_symbols_setting_seeds_the_list_and_an_edit_there_replaces_it(self):
+        self.bar()
+        self.assertEqual(self.watched(), ["stock:SPY", "stock:AAPL", "coin:BTC", "coin:ETH"])
+        self.assertEqual(self.hud(self.add(EURUSD)), "Markets: added FX:EURUSD")
+        self.assertEqual(list(self.rows(self.popover())), ["stock:SPY", "stock:AAPL", "coin:BTC", "coin:ETH", "pair:FX:EURUSD"])
+        self.assertEqual(list(self.rows(self.popover(preferences={"symbols": "BTC, SPY"}))), ["coin:BTC", "stock:SPY"],
+                         "Sven edited the setting: it wins")
+        self.assertEqual(self.watched(), ["coin:BTC", "stock:SPY"])
+
+    def test_hyper_space_search_lists_tradingviews_answers_and_return_adds_one(self):
+        items = self.run_ext("search", query="btc").items
+        self.assertItemShape(items)
+        self.assertEqual([i["id"] for i in items], ["find:pair:BITSTAMP:BTCUSD", "find:pair:COINBASE:BTCUSD", "find:pair:INDEX:BTCUSD",
+                                                    "find:pair:CME:BTC1!", "find:stock:AMEX:BTC", "find:stock:LSE:BTC"])
+        first = items[0]
+        self.assertEqual((first["title"], first["subtitle"], first["icon"]), ("BTCUSD", "Bitcoin / U.S. dollar", "🪙"))
+        self.assertEqual([b["text"] for b in first["badges"]], ["Bitstamp", "Crypto"])
+        self.assertEqual(first["actions"][1]["url"], "https://www.tradingview.com/symbols/BITSTAMP-BTCUSD/")
+        host, _, query, args = self.calls()[0]
+        self.assertEqual((host, query["text"], query.get("search_type")), ("symbol-search.tradingview.com", "btc", None))
+        self.assertIn("Origin: https://www.tradingview.com", args)
+        self.assertEqual(self.hud(self.run_ext("add", context=first["actions"][0]["context"])), "Markets: added BITSTAMP:BTCUSD")
+        self.assertEqual(self.watched()[-1], "pair:BITSTAMP:BTCUSD")
+        again = self.run_ext("search", query="btc").items[0]
+        self.assertIn({"text": "✓ followed", "tone": "fine"}, again["badges"])
+        self.assertEqual(self.hud(self.run_ext("add", context=again["actions"][0]["context"])),
+                         "Markets follows BITSTAMP:BTCUSD already")
+
+    def test_a_leading_type_word_narrows_the_search(self):
+        items = self.run_ext("search", query="crypto btc").items
+        self.assertEqual(self.calls()[0][2]["search_type"], "crypto")
+        self.assertEqual(self.calls()[0][2]["text"], "btc")
+        self.assertEqual([i["title"] for i in items], ["BTCUSD", "BTCUSD", "BTCUSD"], "the coin pairs and the coin index")
+        self.assertEqual([i["title"] for i in self.run_ext("search", query="futures btc").items], ["BTC1!"])
+
+    def test_an_empty_search_shows_how_and_asks_nothing(self):
+        items = self.run_ext("search", query="  ").items
+        self.assertItemShape(items)
+        self.assertIn("crypto", items[1]["title"])
+        self.assertEqual(self.calls(), [])
+
+    def test_search_offline_says_why_in_one_row(self):
+        self.fake_curl(fail="(6) Could not resolve host: symbol-search.tradingview.com")
+        items = self.run_ext("search", query="btc").items
+        self.assertEqual([i["title"] for i in items], ["TradingView did not answer"])
+        self.assertIn("Could not resolve host", items[0]["subtitle"])
+
+    def test_the_page_searches_filters_adds_and_closes(self):
+        page = self.page(pilot=self.PILOT)
+        self.assertEqual(page[0]["action"]["command"], "find")
+        self.assertEqual(self.hud(self.run_ext("find", input="btc")), "Markets: 6 found for btc")
+        section = self.page(pilot=self.PILOT)[1]
+        self.assertEqual((section["type"], section["title"], section["subtitle"]), ("section", "TradingView: “btc”", "6 found · every type"))
+        filters, results = section["blocks"]
+        self.assertEqual([a["title"] for a in filters["actions"]], ["Stocks", "Funds", "Crypto", "Forex", "Indices", "Futures"])
+        self.assertEqual([i["title"] for i in results["items"]][-1], "Close the search")
+        self.assertEqual([a["icon"] for a in results["items"][0]["inline"]], ["plus", "🌐"])
+        self.run_ext("find", context={"type": "crypto"})
+        self.assertEqual(self.calls()[-1][2]["search_type"], "crypto")
+        section = self.page(pilot=self.PILOT)[1]
+        self.assertEqual(section["subtitle"], "3 found · Crypto")
+        self.assertEqual(section["blocks"][0]["actions"][2]["title"], "✓ Crypto")
+        self.run_ext("find", context={"type": "crypto"})
+        self.assertNotIn("search_type", self.calls()[-1][2], "the filter pressed again: every type")
+        self.assertEqual(self.hud(self.run_ext("clear-search")), "Markets: search closed")
+        self.assertNotIn("section", [b["type"] for b in self.page(pilot=self.PILOT)])
+
+    def test_an_older_pilot_gets_no_search_box(self):
+        self.assertNotIn("input", [b["type"] for b in self.page(pilot=self.OLDER)])
+
+    def test_the_pages_rows_move_up_and_down_and_are_removed_in_place(self):
+        rows = list(self.rows(self.page(pilot=self.PILOT)).values())
+        self.assertEqual([a["icon"] for a in rows[0]["inline"]], ["arrow.down", "xmark"])
+        self.assertEqual([a["icon"] for a in rows[1]["inline"]], ["arrow.up", "arrow.down", "xmark"])
+        self.assertEqual([a["icon"] for a in rows[-1]["inline"]], ["arrow.up", "xmark"])
+        self.assertTrue(rows[0]["inline"][-1]["destructive"])
+        self.assertEqual(self.hud(self.run_ext("move", context=rows[0]["inline"][0]["context"])), "Markets: SPY moved down")
+        self.assertEqual(self.watched(), ["stock:AAPL", "stock:SPY", "coin:BTC", "coin:ETH"])
+        self.assertEqual(self.hud(self.run_ext("remove", context={"key": "coin:BTC"})), "Markets: removed BTC")
+        self.assertEqual(self.watched(), ["stock:AAPL", "stock:SPY", "coin:ETH"])
+        self.assertEqual(self.run_ext("move", context={"key": "stock:AAPL", "by": -1}).of_type("error")[0]["text"],
+                         "can't move that symbol there")
+        items = self.run_ext("markets").items
+        self.assertEqual([a["title"] for a in items[0]["actions"]][-2:], ["Move AAPL down", "Remove AAPL from Markets"])
+
+    def test_pairs_keep_their_own_figures_and_need_no_rate(self):
+        none = {"symbols": " "}
+        for symbol in (EURUSD, SPX, markets.picked(SEARCH["symbols"][0])):
+            self.add(symbol, preferences=none)
+        rows = self.rows(self.popover(preferences=none))
+        self.assertEqual([r["title"] for r in rows.values()], ["EURUSD · 1.1239", "SPX · 7,659.44", "BTCUSD · $81,610"])
+        self.assertEqual([r["icon"] for r in rows.values()], ["💱", "📊", "🪙"])
+        self.assertEqual(self.asked(), ["tv-global-tickers"], "one call for every pair, no exchange rate")
+        hero = self.page(preferences=dict(none, pinned="EURUSD"), pilot=self.PILOT)[1]
+        self.assertEqual((hero["value"], hero.get("unit")), ("1.1239", "USD"))
+
+    def test_nasdaq_says_a_pair_is_priced_on_tradingview_alone(self):
+        self.add(EURUSD, preferences={"source": "nasdaq"})
+        self.popover(preferences={"source": "nasdaq"})
+        self.settle()
+        row = self.rows(self.popover(preferences={"source": "nasdaq"}))["pair:FX:EURUSD"]
+        self.assertIn("TradingView alone", row["subtitle"])
+        self.assertEqual(row["actions"][0]["url"], "https://www.tradingview.com/symbols/FX-EURUSD/")
+
+    def test_a_full_list_takes_no_more(self):
+        self.bar(preferences={"symbols": " ".join("S%d" % i for i in range(12))})
+        result = self.add(EURUSD, preferences={"symbols": " ".join("S%d" % i for i in range(12))})
+        self.assertEqual(result.of_type("error")[0]["text"], "follows 12 symbols at most: remove one first")
+
+
 class MarketWords(unittest.TestCase):
     """The parts that need no network or clock: symbols, New York's session, the figures and the line."""
 
@@ -416,6 +571,18 @@ class MarketWords(unittest.TestCase):
         found = markets.symbols("spy, AAPL btc;ETH, coin:kas stock:ETH, BTC, bad$sym, ")
         self.assertEqual([s["key"] for s in found], ["stock:SPY", "stock:AAPL", "coin:BTC", "coin:ETH", "coin:KAS", "stock:ETH"])
         self.assertEqual(len(markets.symbols(" ".join("S%d" % i for i in range(20)))), 12)
+
+    def test_search_words_and_picks(self):
+        self.assertEqual(markets.search_words(" Crypto  sol "), ("sol", "crypto"))
+        self.assertEqual(markets.search_words("etf"), ("etf", ""), "a type word alone is searched for")
+        self.assertEqual(markets.search_words("fx eur usd"), ("eur usd", "forex"))
+        future = markets.picked(SEARCH["symbols"][3])
+        self.assertEqual((future["key"], future["symbol"], future["where"]), ("pair:CME:BTC1!", "BTC1!", "CME"))
+        self.assertEqual(markets.picked(SEARCH["symbols"][4])["key"], "stock:AMEX:BTC")
+        self.assertIsNone(markets.entry({"kind": "pair", "symbol": "EURUSD"}), "a pair names its listing")
+        self.assertIsNone(markets.entry({"kind": "stock", "symbol": "AAPL", "listing": "NASDAQ:MSFT"}))
+        self.assertEqual(markets.rate_figure(1.12385), "1.1239")
+        self.assertEqual(markets.rate_figure(150.1234), "150.123")
 
     def test_a_stock_is_asked_every_five_minutes_in_session_and_once_after_each_close(self):
         def due(now, fetched, key="stock:SPY", **extra):

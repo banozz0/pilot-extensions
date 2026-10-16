@@ -22,6 +22,12 @@ failed symbol keeps its last answer, marked old, and is not asked again for RETR
 
 The menu bar shows one or several symbols (side by side, or one a minute in turn) as text, as text with the day's line,
 or as mini bars: one of Pilot's gauges a symbol, its meter where the price stands in the day's range, in its own tone.
+
+The symbols followed are a list kept in the data folder (watchlist.json), seeded from the Symbols setting; an edit of
+that setting replaces it. TradingView's symbol search (the one tradingview.com's search box reads) adds to it, from
+Hyper+Space's Add to Markets, which asks as Sven types, or the page's search box, whose answer the page then draws; the
+page's rows move up and down and are removed in place. A listing picked there that is not a stock or a fund (a coin pair,
+a currency pair, an index, a future) is a pair: priced in its own figures, never converted, and on TradingView only.
 """
 import fcntl
 import json
@@ -57,15 +63,34 @@ NAMES = "names.json"
 FX = "fx.json"
 TURN = "turn.json"
 LOCK = "refresh.lock"
+WATCHLIST = "watchlist.json"  # in the data folder: the symbols followed
+FOUND = "search.json"  # in the cache: the page's last search
+FOUND_FOR = 30 * 60  # the page shows its last search this long
+FOUND_ROWS = 20
+SEARCH_BUDGET = 1.3  # Hyper+Space's search asks within Pilot's 2 s
+SEARCH_API = "https://symbol-search.tradingview.com/symbol_search/v3/"
+SEARCH_HEADERS = ["Origin: https://www.tradingview.com", "Referer: https://www.tradingview.com/"]
+# TradingView's search filters (search_type), in the page's order, and the words that pick one in Hyper+Space's search.
+FILTERS = {"stocks": "Stocks", "funds": "Funds", "crypto": "Crypto", "forex": "Forex", "index": "Indices",
+           "futures": "Futures"}
+FILTER_WORDS = {"stock": "stocks", "stocks": "stocks", "fund": "funds", "funds": "funds", "etf": "funds", "etfs": "funds",
+                "crypto": "crypto", "coin": "crypto", "coins": "crypto", "fx": "forex", "forex": "forex", "index": "index",
+                "indices": "index", "future": "futures", "futures": "futures"}
+ASSET_WORDS = {"stocks": "Stock", "etf": "Fund", "coin": "Crypto", "forex": "Forex", "index": "Index", "futures": "Futures"}
+ASSETS = {"stock": "stocks", "dr": "stocks", "fund": "etf", "spot": "coin", "crypto": "coin", "forex": "forex",
+          "index": "index", "futures": "futures"}
+STOCK_TYPES = [t for t, a in ASSETS.items() if a in ("stocks", "etf")]  # picked, a stock in the currency asked; the rest pairs
+FILTER_ASSETS = {"stocks": "stocks", "funds": "etf", "crypto": "coin", "forex": "forex", "index": "index", "futures": "futures"}
 AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 NASDAQ = "https://api.nasdaq.com/api/quote/%s/chart?assetclass=%s"
 COINS_API = "https://api.coingecko.com/api/v3/coins/markets"
-SEARCH_API = "https://api.coingecko.com/api/v3/search"
+COIN_SEARCH = "https://api.coingecko.com/api/v3/search"
 SCANNER = "https://scanner.tradingview.com/%s/scan"
 FX_API = "https://api.frankfurter.dev/v1/latest"
 NEW_YORK = ZoneInfo("America/New_York")
 SYMBOL = re.compile(r"[A-Z0-9][A-Z0-9.\-]{0,11}\Z")
-EXCHANGE = re.compile(r"[A-Z][A-Z0-9_]{0,11}\Z")
+TICKER = re.compile(r"[A-Z0-9][A-Z0-9.\-_!]{0,19}\Z")  # a search pick's symbol: a future's continuous ES1! too
+EXCHANGE = re.compile(r"[A-Z][A-Z0-9_]{0,19}\Z")
 # The coins a bare symbol means, by CoinGecko id; any other is a stock unless written coin:XYZ (stock:XYZ forces a
 # stock: ETH is also Ethan Allen's ticker).
 COINS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple", "BNB": "binancecoin", "DOGE": "dogecoin",
@@ -77,7 +102,7 @@ COINS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple", 
 COIN_EXCHANGES = ["COINBASE", "KRAKEN", "BITSTAMP", "BINANCE", "BITVAVO", "GEMINI", "BITFINEX", "OKX", "BYBIT"]
 TV_COLUMNS = ["name", "close", "change", "change_abs", "high", "low", "description", "currency", "type", "exchange"]
 MONEY = {"eur": "€", "usd": "$", "gbp": "£", "chf": "CHF "}
-KINDS = {"stocks": "🏢", "etf": "🧺", "coin": "🪙"}
+KINDS = {"stocks": "🏢", "etf": "🧺", "coin": "🪙", "forex": "💱", "index": "📊", "futures": "📜", "other": "📈"}
 # Each source: its short name in a kept record's key, when its stocks' session may open (New York time), whether it
 # knows a holiday, and per kind the site a row opens and what a move is measured over.
 STOCK_WORDS = {"badge": "", "window": "Today", "range": "Day range"}
@@ -143,11 +168,71 @@ def symbols(text):
     return found[:MOST]
 
 
+def entry(value):
+    """A symbol followed as kept or handed on in a context, checked: {"key", "kind", "symbol", "listing"} and, from a
+    search, its "type" and "name"; None when it does not read. A pair always names its listing."""
+    if not isinstance(value, dict):
+        return None
+    kind, symbol, listing = value.get("kind"), value.get("symbol"), value.get("listing")
+    if kind not in ("stock", "coin", "pair") or not isinstance(symbol, str) or not TICKER.match(symbol):
+        return None
+    if listing is not None:
+        prefix, _, name = str(listing).rpartition(":")
+        if not EXCHANGE.match(prefix) or name != symbol:
+            return None
+    elif kind == "pair":
+        return None
+    found = {"key": "%s:%s" % (kind, listing or symbol), "kind": kind, "symbol": symbol, "listing": listing}
+    for extra in ("type", "name", "where"):
+        if isinstance(value.get(extra), str) and value[extra]:
+            found[extra] = value[extra][:80]
+    return found
+
+
+def asset_of(symbol):
+    """What a followed symbol is before a price says: a coin, else its search type's (a stock, a fund, a pair's)."""
+    if symbol["kind"] == "coin":
+        return "coin"
+    return ASSETS.get(symbol.get("type"), "stocks" if symbol["kind"] == "stock" else "other")
+
+
+def data_dir(run):
+    """Pilot's data folder for this extension; None when Pilot sent none."""
+    folder = (run.get("paths") or {}).get("data")
+    return folder if isinstance(folder, str) and folder else None
+
+
+def watchlist(run):
+    """The symbols followed, in order: the list kept, or the Symbols setting's when none is kept or that setting was
+    edited since (an edit there replaces the list; Markets 1.1's setting is read this way the first time)."""
+    text = str((run.get("preferences") or {}).get("symbols") or "")
+    folder = data_dir(run)
+    kept = load(folder, WATCHLIST) if folder else {}
+    if kept.get("from") == text and isinstance(kept.get("symbols"), list):
+        return [e for e in map(entry, kept["symbols"]) if e][:MOST]
+    listed = symbols(text)
+    keep(run, listed)
+    return listed
+
+
+def keep(run, listed):
+    """Keeps `listed` as the symbols followed, with the setting's text it stands for."""
+    try:
+        folder = data_dir(run)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+            save(folder, WATCHLIST, {"from": str((run.get("preferences") or {}).get("symbols") or ""), "symbols": listed})
+            return True
+    except OSError:
+        pass
+    return False
+
+
 def settings(run):
     """What to ask, from where, in which money, and how the bar shows it: its symbols (the first when none named is
     listed), side by side or in turn, its style and its parts."""
     prefs = run.get("preferences") or {}
-    listed = symbols(prefs.get("symbols"))
+    listed = watchlist(run)
     named = words(prefs.get("pinned"))
     pinned = []
     for word in named:
@@ -163,9 +248,10 @@ def settings(run):
 
 
 def record_key(symbol, want):
-    """Where a symbol's answer is kept, per source: a stock's in its listing's money, a coin's in the currency asked."""
+    """Where a symbol's answer is kept, per source: a stock's or a pair's in its listing's money, a coin's in the
+    currency asked."""
     key = "%s:%s" % (SOURCES[want["source"]]["tag"], symbol["key"])
-    return key if symbol["kind"] == "stock" else "%s:%s" % (key, want["currency"])
+    return key if symbol["kind"] != "coin" else "%s:%s" % (key, want["currency"])
 
 
 # ---- sessions ----
@@ -216,14 +302,14 @@ def resting(record, now):
 
 
 def due(kind, record, now, source="nasdaq"):
-    """Whether a kept answer is asked again: none kept, a coin's after FRESH s, a stock's after FRESH s while its session
-    may run or once after each close; never while resting."""
+    """Whether a kept answer is asked again: none kept, a coin's or a pair's after FRESH s, a stock's after FRESH s while
+    its session may run or once after each close; never while resting."""
     if resting(record, now):
         return False
     if "quote" not in record:
         return True
     fetched = record.get("fetchedAt") or 0
-    if kind == "coin":
+    if kind != "stock":
         return now - fetched >= FRESH
     running = in_session(now, opens=SOURCES[source]["session"]) and now - fetched >= FRESH
     return (running and not (SOURCES[source]["holidays"] and holiday(record, now))) or fetched < last_settled(now)
@@ -239,7 +325,8 @@ def holiday(record, now):
 def fx_pairs(want, quotes):
     """The rates the kept quotes need: each money a quote is in that is not the currency asked, as "USD:EUR"."""
     asked = want["currency"].upper()
-    found = {(quotes.get(record_key(s, want)) or {}).get("quote", {}).get("currency") for s in want["symbols"]}
+    found = {(quotes.get(record_key(s, want)) or {}).get("quote", {}).get("currency") for s in want["symbols"]
+             if s["kind"] == "stock"}
     return sorted("%s:%s" % (c, asked) for c in found if isinstance(c, str) and c and c != asked)
 
 
@@ -250,16 +337,18 @@ def fx_due(pair, fx, now, force=False):
 
 # ---- asking ----
 
-def curl(url, browser=False, body=None):
+def curl(url, browser=False, body=None, headers=(), timeout=CURL_TIMEOUT):
     """(parsed JSON, None) or (None, why); `browser` sends a browser's User-Agent, which Nasdaq answers alone; `body`
-    is POSTed as JSON. The URL is curl's last argument."""
+    is POSTed as JSON; `headers` are sent as they are; it gives up after `timeout` s. The URL is curl's last argument."""
     binary = shutil.which("curl") or "/usr/bin/curl"
     extra = ["-A", AGENT, "-H", "Accept: application/json"] if browser else []
+    for header in headers:
+        extra += ["-H", header]
     if body is not None:
         extra += ["-H", "Content-Type: application/json", "--data-binary", json.dumps(body, separators=(",", ":"))]
     try:
-        done = subprocess.run([binary, "-sS", "--fail", "--compressed", "--max-time", str(CURL_TIMEOUT)] + extra + [url],
-                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=CURL_TIMEOUT + 2)
+        done = subprocess.run([binary, "-sS", "--fail", "--compressed", "--max-time", str(timeout)] + extra + [url],
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout + 0.5)
     except (OSError, subprocess.TimeoutExpired):
         return None, "could not reach it"
     if done.returncode != 0:
@@ -340,7 +429,7 @@ def coin_id(symbol, names):
         return COINS[symbol], None
     if "cg:" + symbol in names:
         return names["cg:" + symbol], None
-    answer, error = curl(SEARCH_API + "?" + urlencode({"query": symbol}))
+    answer, error = curl(COIN_SEARCH + "?" + urlencode({"query": symbol}))
     if error:
         return None, "CoinGecko: %s" % error
     found = [c for c in (answer or {}).get("coins") or [] if isinstance(c, dict) and str(c.get("symbol", "")).upper() == symbol
@@ -391,7 +480,8 @@ def fetch_coins(coins, currency, names):
 
 
 def nasdaq_fetch(asked, want, names):
-    """{record key: (quote, None) or (None, why)}: each stock its own call, side by side, the coins one call."""
+    """{record key: (quote, None) or (None, why)}: each stock its own call, side by side, the coins one call; a pair
+    neither knows."""
     from concurrent.futures import ThreadPoolExecutor  # the child's alone: a view never pays for it
 
     stocks = [s for s in asked if s["kind"] == "stock"]
@@ -400,6 +490,8 @@ def nasdaq_fetch(asked, want, names):
         coin_job = pool.submit(fetch_coins, [s["symbol"] for s in coins], want["currency"], names) if coins else None
         jobs = {record_key(s, want): pool.submit(fetch_stock, s["symbol"], names.get(record_key(s, want))) for s in stocks}
         answers = {key: job.result() for key, job in jobs.items()}
+        answers.update((record_key(s, want), (None, "TradingView alone prices it: pick it under Prices from"))
+                       for s in asked if s["kind"] == "pair")
         if coin_job:
             found = coin_job.result()
             answers.update((record_key(s, want), found[s["symbol"]]) for s in coins)
@@ -419,9 +511,9 @@ def tv_quote(ticker, row, coin):
     if price is None:
         return None
     change = number(d.get("change_abs"))
-    asset = "coin" if coin else "etf" if d.get("type") == "fund" else "stocks"
+    asset = "coin" if coin else ASSETS.get(d.get("type"), "stocks")
     return {"name": str(d.get("description") or d.get("name") or ""), "price": price, "change": change,
-            "percent": number(d.get("change")), "previous": None if coin or change is None else price - change,
+            "percent": number(d.get("change")), "previous": None if asset == "coin" or change is None else price - change,
             "low": number(d.get("low")), "high": number(d.get("high")), "ticker": ticker, "asset": asset,
             "currency": str(d.get("currency") or "").upper() or None}
 
@@ -462,8 +554,9 @@ def tv_market(market, asks, pick, coin):
 
 
 def tv_fetch(asked, want, names):
-    """{record key: (quote, None) or (None, why)}: every stock in one call on the global market, every coin as its pair
-    in the currency asked in one on the crypto market; each listing found is kept for the next time."""
+    """{record key: (quote, None) or (None, why)}: every stock and pair in one call on the global market (it answers
+    any listing by its ticker), every coin as its pair in the currency asked in one on the crypto market; each listing
+    found is kept for the next time."""
     from concurrent.futures import ThreadPoolExecutor  # the child's alone: a view never pays for it
 
     currency = want["currency"].upper()
@@ -473,7 +566,7 @@ def tv_fetch(asked, want, names):
         pairs = [r for r in rows if str(dict(zip(TV_COLUMNS, r[1])).get("currency")).upper() == currency]
         return min(pairs, key=lambda r: rank.get(r[0].split(":")[0], len(rank)), default=None)
 
-    stocks = {record_key(s, want): (s["symbol"], s["listing"] or names.get(record_key(s, want))) for s in asked if s["kind"] == "stock"}
+    stocks = {record_key(s, want): (s["symbol"], s["listing"] or names.get(record_key(s, want))) for s in asked if s["kind"] != "coin"}
     coins = {record_key(s, want): (s["symbol"] + currency, names.get(record_key(s, want))) for s in asked if s["kind"] == "coin"}
     with ThreadPoolExecutor(max_workers=2) as pool:
         jobs = [pool.submit(tv_market, "global", stocks, lambda rows: rows[0] if rows else None, False) if stocks else None,
@@ -647,6 +740,13 @@ def figure(value):
     return "{:.4g}".format(value)
 
 
+def rate_figure(value):
+    """A currency pair's rate as traders read one: four decimals, three from 10 (USDJPY)."""
+    if value is None:
+        return "–"
+    return "{:,.4f}".format(value) if abs(value) < 10 else "{:,.3f}".format(value)
+
+
 def amount(value):
     """A change in money: in cents from one cent, as a price below it (a small coin's)."""
     return "{:,.2f}".format(value) if 0.01 <= abs(value) < 1 else figure(value)
@@ -702,13 +802,21 @@ def age(seconds):
 
 class Row:
     """One symbol's kept answer, read for a view, its money settled once: in the currency asked when the price is, or
-    converted at the ECB's rate (≈), or in its own money while no rate is known."""
+    converted at the ECB's rate (≈), or in its own money while no rate is known. A pair keeps its own figures: a coin
+    pair's in its money, a currency pair's, an index's or a future's bare."""
 
     def __init__(self, symbol, record, board):
         self.symbol, self.kind, self.key, self.listing = symbol["symbol"], symbol["kind"], symbol["key"], symbol["listing"]
         self.quote, self.error, self.fetched = record.get("quote") or {}, record.get("error"), record.get("fetchedAt")
-        self.coin, self.source = self.kind == "coin", board.source
-        self.words = SOURCES[board.source]["words"][self.kind]
+        self.coin, self.pair = self.kind == "coin", self.kind == "pair"
+        self.source = "tradingview" if self.pair else board.source  # the one source that prices a pair
+        self.asset = self.quote.get("asset") or asset_of(symbol)
+        self.words = SOURCES[self.source]["words"]["coin" if self.asset == "coin" else "stock"]
+        self.figure, self.short = (rate_figure, rate_figure) if self.asset == "forex" else (figure, short)
+        if self.pair:
+            self.approx, self.rate, self.unit = False, 1, self.quote.get("currency") or ""
+            self.sign = sign(self.unit) if self.unit and self.asset == "coin" else ""
+            return
         own = self.quote.get("currency") or (board.currency.upper() if self.coin else "USD")
         rate = 1 if own == board.currency.upper() else board.rates.get("%s:%s" % (own, board.currency.upper()))
         self.approx = bool(rate) and rate != 1
@@ -736,17 +844,17 @@ class Row:
     def scaled(self, value):
         return None if value is None else value * self.rate
 
-    def money(self, value, near=True, shown=figure):
+    def money(self, value, near=True, shown=None):
         """A figure with its money sign, ≈ before a converted one."""
         if value is None:
             return "–"
-        return ("≈ " if near and self.approx else "") + self.sign + shown(self.scaled(value))
+        return ("≈ " if near and self.approx else "") + self.sign + (shown or self.figure)(self.scaled(value))
 
     def url(self):
-        """Its page on the source the prices come from."""
+        """Its page on the source the prices come from; a pair's on TradingView, the one source that has it."""
         if self.source == "tradingview":
             ticker = self.quote.get("ticker") or self.listing
-            return ("https://www.tradingview.com/symbols/%s/" % ticker.replace(":", "-") if ticker else
+            return (tv_page(ticker) if ticker else
                     "https://www.tradingview.com/chart/?symbol=%s" % (self.symbol + (self.unit if self.coin else "")))
         if self.coin:
             return "https://www.coingecko.com/en/coins/%s" % (self.quote.get("id") or COINS.get(self.symbol, self.symbol.lower()))
@@ -762,20 +870,39 @@ class Row:
             found.append({"text": "⚠ %s old" % age(time.time() - (self.fetched or 0)), "tone": "warn"})
         return [{k: v for k, v in b.items() if v is not None} for b in found]
 
-    def item(self):
+    def item(self, edits=(), buttons=False):
+        """Its row: Return opens it, Cmd+K copies its price; `edits` (moving it, removing it) are its inline buttons when
+        `buttons` (the page), else more of Cmd+K's (Hyper+Space)."""
         where = self.words["site"]
-        item = {"id": self.key, "title": self.symbol, "icon": KINDS[self.quote.get("asset") or ("coin" if self.coin else "stocks")],
+        item = {"id": self.key, "title": self.symbol, "icon": KINDS.get(self.asset, KINDS["other"]),
                 "keywords": " ".join(filter(None, [self.symbol, self.quote.get("name"), self.kind])), "badges": self.badges(),
                 "actions": [{"type": "open", "url": self.url(), "title": "Open %s on %s" % (self.symbol, where)}],
                 "inline": [{"type": "open", "url": self.url(), "title": "Open on %s" % where, "icon": "🌐"}]}
         if not self.quote:
             item["subtitle"] = self.error or "Asking…"
-            return item
-        price = self.money(self.quote["price"])
-        item["title"] = "%s · %s" % (self.symbol, price)
-        item["subtitle"] = "  ".join(w for w in [spark(self.line), self.quote.get("name"), self.error] if w)
-        item["actions"].append({"type": "copy", "text": "%s %s" % (self.symbol, price), "title": "Copy the price"})
+        else:
+            price = self.money(self.quote["price"])
+            item["title"] = "%s · %s" % (self.symbol, price)
+            item["subtitle"] = "  ".join(w for w in [spark(self.line), self.quote.get("name"), self.error] if w)
+            item["actions"].append({"type": "copy", "text": "%s %s" % (self.symbol, price), "title": "Copy the price"})
+        if buttons:
+            item["inline"] = list(edits)
+        else:
+            item["actions"] += edits
         return item
+
+    def edits(self, at, count):
+        """Move up (not the first), move down (not the last), remove: runs that change the list followed."""
+        found = []
+        if at > 0:
+            found.append({"type": "run", "command": "move", "title": "Move %s up" % self.symbol, "icon": "arrow.up",
+                          "context": {"key": self.key, "by": -1}})
+        if at < count - 1:
+            found.append({"type": "run", "command": "move", "title": "Move %s down" % self.symbol, "icon": "arrow.down",
+                          "context": {"key": self.key, "by": 1}})
+        found.append({"type": "run", "command": "remove", "title": "Remove %s from Markets" % self.symbol, "icon": "xmark",
+                      "destructive": True, "context": {"key": self.key}})
+        return found
 
     def parts(self, show, style):
         """The bar's words for it, each (part, text) in order: symbol, line, price, change in percent, change in money."""
@@ -787,7 +914,8 @@ class Row:
         if style == "line" and len(self.line) > 1:
             found.append(("line", spark(thin(self.line, BAR_SPARK))))
         if show["price"]:
-            found.append(("price", self.sign.strip() + short(self.scaled(q["price"]))))
+            price = self.scaled(q["price"])
+            found.append(("price", self.sign.strip() + self.short(price)))
         if show["percent"]:
             found.append(("percent", change(q.get("percent"), tight=True)))
         if show["change"] and q.get("change") is not None:
@@ -820,13 +948,13 @@ class Row:
         if moved_by is not None:
             delta += " · %s%s" % (signed(moved_by), self.money(abs(moved_by), near=False, shown=amount))
         items = [{"label": self.words["window"], "value": delta, "tone": tone(moved)},
-                 {"label": self.words["range"], "value": "%s – %s" % (figure(self.scaled(q.get("low"))), figure(self.scaled(q.get("high"))))}]
+                 {"label": self.words["range"], "value": "%s – %s" % (self.figure(self.scaled(q.get("low"))), self.figure(self.scaled(q.get("high"))))}]
         if q.get("previous") is None:
             items.append({"label": "As of", "value": clock(q.get("asOf") or self.fetched or time.time())})
         else:
-            items.append({"label": "Prev close", "value": figure(self.scaled(q["previous"]))})
-        hero = {"type": "hero", "glyph": {"fine": "📈", "alert": "📉"}.get(tone(moved), "➖"), "value": figure(self.scaled(q["price"])),
-                "unit": self.unit, "place": " · ".join(where), "tone": self.tone,
+            items.append({"label": "Prev close", "value": self.figure(self.scaled(q["previous"]))})
+        hero = {"type": "hero", "glyph": {"fine": "📈", "alert": "📉"}.get(tone(moved), "➖"), "value": self.figure(self.scaled(q["price"])),
+                "unit": self.unit or None, "place": " · ".join(where), "tone": self.tone,
                 "items": [{k: v for k, v in stat.items() if v is not None} for stat in items]}
         return {k: v for k, v in hero.items() if v is not None}
 
@@ -839,7 +967,7 @@ class Board:
         self.rates = {pair: r["rate"] for pair, r in fx.items() if isinstance(r, dict) and r.get("rate")}
         self.rows = [Row(s, quotes.get(record_key(s, want)) or {}, self) for s in want["symbols"]]
         self.pinned = [r for key in want["pinned"] for r in self.rows if r.key == key]
-        self.us = any(not r.coin and r.quote.get("currency", "USD") == "USD" for r in self.rows)
+        self.us = any(r.kind == "stock" and r.quote.get("currency", "USD") == "USD" for r in self.rows)
 
     def status(self):
         """Updated 14:05 · US market closed · opens Mon 15:30."""
@@ -851,6 +979,10 @@ class Board:
 
     def credit(self):
         return SOURCES[self.source]["credit"] + FX_CREDIT
+
+    def items(self, buttons):
+        """Every row with its edits (story 165's inline buttons when `buttons`)."""
+        return [r.item(r.edits(at, len(self.rows)), buttons) for at, r in enumerate(self.rows)]
 
     def summary(self):
         return ", ".join("%s %s" % (r.symbol, change(r.quote.get("percent"))) for r in self.rows if r.quote) or "no prices yet"
@@ -925,15 +1057,17 @@ def refresh_button():
 
 def view_blocks(run, board, view):
     """The bar's first symbol big (where Pilot draws a hero), every symbol a row, then when it was read and the market's
-    hours, and Refresh; a page adds its sources."""
+    hours, and Refresh; a page leads with its search and adds its sources, its rows moved and removed in place."""
     kinds = drawn(run)
+    page_ = view == "page"
+    found = search_blocks(run, kinds, {r.key for r in board.rows}) if page_ else []
     if not board.rows:
-        return [{"type": "markdown", "text": "No symbols: add some in Markets' settings, e.g. SPY, AAPL, BTC, ETH."}]
-    found = []
+        where = "search above" if found else "add some in Markets' settings, e.g. SPY, AAPL, BTC, ETH"
+        return found + [{"type": "markdown", "text": "No symbols: %s." % where}]
     first = board.pinned[0] if board.pinned else None
     if "hero" in kinds and first and first.quote:
         found.append(first.hero())
-    found.append({"type": "list", "items": [r.item() for r in board.rows]})
+    found.append({"type": "list", "items": board.items(True) if page_ else [r.item() for r in board.rows]})
     name = SOURCES[board.source]["name"]
     if "note" in kinds:
         found.append({"type": "note", "text": board.status(), "aside": name, "icon": "chart"})
@@ -969,12 +1103,242 @@ def page(run):
 
 
 def listing(run):
-    """Hyper+Space's Markets: every symbol a row, Refresh after them."""
+    """Hyper+Space's Markets: every symbol a row (Cmd+K moves or removes it), then Add to Markets and Refresh."""
     _, board, running = markets(run, BUDGET["list"])
-    items = [r.item() for r in board.rows]
+    items = board.items(False)
+    items.append({"id": "search", "title": "Add to Markets…", "subtitle": "Search TradingView: BTC, AAPL, EURUSD, SPX",
+                  "icon": "🔎", "actions": [{"type": "push", "command": "search", "title": "Search TradingView"}]})
     items.append({"id": "refresh", "title": "Refresh the prices", "subtitle": board.status(), "icon": "🔄",
                   "actions": [dict(refresh_button(), title="Refresh the prices")]})
     send({"type": "list", "items": items})
+
+
+# ---- search and the list followed ----
+
+def search_words(text):
+    """(the words to search, the filter a leading word names or ""): "crypto sol" is sol among coins; a filter word
+    alone is searched for."""
+    parts = str(text or "").split()
+    if len(parts) > 1 and parts[0].lower() in FILTER_WORDS:
+        return " ".join(parts[1:]), FILTER_WORDS[parts[0].lower()]
+    return " ".join(parts), ""
+
+
+def plain(text):
+    """A search answer's text without its highlights."""
+    import html  # the search's alone: a view never pays for it
+
+    return html.unescape(re.sub(r"</?em>", "", str(text or ""))).strip()
+
+
+def picked(result):
+    """A search answer's row as a symbol to follow, with "where" it trades (its exchange's name); None when it does not
+    read. A stock or a fund is a stock (EXCHANGE:XYZ); the rest pairs. A future is followed by its continuous contract."""
+    if not isinstance(result, dict):
+        return None
+    kind = str(result.get("type") or "")
+    symbol = plain(result.get("symbol")).upper()
+    contracts = [c for c in result.get("contracts") or [] if isinstance(c, dict)] if isinstance(result.get("contracts"), list) else []
+    if contracts:
+        contract = next((c for c in contracts if "continuous" in (c.get("typespecs") or [])), contracts[0])
+        symbol = plain(contract.get("symbol")).upper()
+    exchange = str(result.get("prefix") or result.get("source_id") or result.get("exchange") or "").upper()
+    source = result.get("source2") if isinstance(result.get("source2"), dict) else {}
+    return entry({"kind": "stock" if kind in STOCK_TYPES else "pair", "symbol": symbol, "listing": "%s:%s" % (exchange, symbol),
+                  "type": kind, "name": plain(result.get("description")), "where": plain(source.get("name") or result.get("exchange"))})
+
+
+def fits(result, kind):
+    """Whether an answer is of the filter asked: TradingView narrows by it, and an unknown filter narrows nothing there."""
+    if kind not in FILTER_ASSETS:
+        return True
+    specs = result.get("typespecs") if isinstance(result.get("typespecs"), list) else []
+    return ASSETS.get(result.get("type")) == FILTER_ASSETS[kind] or (kind == "crypto" and "crypto" in specs)
+
+
+def search(text, kind, timeout):
+    """(symbols found for `text`, each once, in TradingView's order, None) or (None, why)."""
+    query = {"text": text, "hl": "0", "exchange": "", "lang": "en", "search_type": kind, "domain": "production",
+             "sort_by_country": "US"}
+    answer, error = curl(SEARCH_API + "?" + urlencode(query), headers=SEARCH_HEADERS, timeout=timeout)
+    if error:
+        return None, "TradingView: %s" % error
+    results = answer.get("symbols") if isinstance(answer, dict) else answer
+    if not isinstance(results, list):
+        return None, "TradingView: its answer did not read"
+    found, seen = [], set()
+    for result in results:
+        made = picked(result) if isinstance(result, dict) and fits(result, kind) else None
+        if made and made["key"] not in seen:
+            seen.add(made["key"])
+            found.append(made)
+    return found, None
+
+
+def tv_page(ticker):
+    return "https://www.tradingview.com/symbols/%s/" % ticker.replace(":", "-")
+
+
+def context(run):
+    """The run's context, a dict, else {}."""
+    found = run.get("context")
+    return found if isinstance(found, dict) else {}
+
+
+def label(symbol):
+    return symbol["listing"] or symbol["symbol"]
+
+
+def found_item(symbol, followed, buttons):
+    """A search answer as a row: Return adds it (said when it is followed already), Cmd+K opens it on TradingView or
+    copies its ticker; `buttons` draws add and open as its inline buttons (the page)."""
+    adds = {"type": "run", "command": "add", "title": "Add %s to Markets" % symbol["symbol"],
+            "context": {"symbol": symbol}}
+    opens = {"type": "open", "url": tv_page(label(symbol)),
+             "title": "Open %s on TradingView" % symbol["symbol"]}
+    asset = asset_of(symbol)
+    badges = [{"text": b} for b in (symbol.get("where"), ASSET_WORDS.get(asset, symbol.get("type", "").capitalize())) if b]
+    if symbol["key"] in followed:
+        badges.append({"text": "✓ followed", "tone": "fine"})
+    item = {"id": "find:" + symbol["key"], "title": symbol["symbol"], "subtitle": symbol.get("name", ""),
+            "icon": KINDS.get(asset, KINDS["other"]), "badges": badges[:3],
+            "keywords": " ".join(filter(None, [symbol["symbol"], symbol.get("name"), symbol.get("where")])),
+            "actions": [adds, opens, {"type": "copy", "text": label(symbol), "title": "Copy %s" % label(symbol)}]}
+    if buttons:
+        item["inline"] = [dict(adds, title="Add", icon="plus"), dict(opens, title="Open on TradingView", icon="🌐")]
+    return item
+
+
+def search_list(run):
+    """Hyper+Space's Add to Markets: TradingView's answers for the words typed, asked on each change (filter self) within
+    Pilot's 2 s; a leading crypto, stock, fund, forex, index or futures narrows them."""
+    text, kind = search_words(run.get("query"))
+    if not text:
+        send({"type": "list", "items": [
+            {"id": "hint", "title": "Type a symbol or a name", "subtitle": "BTC, AAPL, EURUSD, SPX, gold", "icon": "🔎"},
+            {"id": "hint-filter", "title": "Start with crypto, stock, fund, forex, index or futures to narrow",
+             "subtitle": "crypto sol · forex eur · futures es", "icon": "🏷️"}]})
+        return
+    found, error = search(text, kind, SEARCH_BUDGET)
+    followed = {s["key"] for s in watchlist(run)}
+    if error:
+        items = [{"id": "error", "title": "TradingView did not answer", "subtitle": error, "icon": "⚠️"}]
+    else:
+        items = [found_item(s, followed, False) for s in found] or [
+            {"id": "none", "title": "Nothing on TradingView for %s" % text, "icon": "🔎"}]
+    send({"type": "list", "items": items})
+
+
+def held_search(folder):
+    """The page's last search while it is younger than FOUND_FOR s, else {}."""
+    held = load(folder, FOUND)
+    return held if held.get("query") and time.time() - (held.get("at") or 0) < FOUND_FOR else {}
+
+
+def search_blocks(run, kinds, followed):
+    """The page's search box (where Pilot draws one), then its last search: a button a filter (pressed again, every
+    type), its answers as rows that add with Return, and Close."""
+    blocks = []
+    if "input" in kinds:
+        blocks.append({"type": "input", "placeholder": "Search TradingView: BTC, AAPL, EURUSD, SPX…",
+                       "action": {"type": "run", "command": "find", "title": "Search"}})
+    held = held_search(cache_dir(run))
+    if not held:
+        return blocks
+    kind = held.get("type") or ""
+    symbols_found = [s for s in map(entry, held.get("found") or []) if s]
+    filters = {"type": "buttons", "actions": [{"type": "run", "command": "find", "title": ("✓ " if value == kind else "") + title,
+                                               "context": {"type": value}} for value, title in FILTERS.items()]}
+    rows = [found_item(s, followed, True) for s in symbols_found[:FOUND_ROWS]] or [
+        {"id": "find:none", "title": held.get("error") or "Nothing found", "icon": "⚠️" if held.get("error") else "🔎"}]
+    rows.append({"id": "find:close", "title": "Close the search", "icon": "✖️",
+                 "actions": [{"type": "run", "command": "clear-search", "title": "Close the search"}]})
+    title = "TradingView: “%s”" % held["query"]
+    subtitle = "%d found · %s" % (len(symbols_found), FILTERS.get(kind, "every type"))
+    inner = [filters, {"type": "list", "items": rows}]
+    if "section" in kinds:
+        return blocks + [{"type": "section", "title": title, "subtitle": subtitle, "blocks": inner}]
+    return blocks + [{"type": "markdown", "text": "**%s** · %s" % (title, subtitle)}] + inner
+
+
+def find(run):
+    """The page's search: the words typed in its box, or a filter button's filter over the words held (pressed again,
+    every type); its answers are kept for the page to draw."""
+    folder = cache_dir(run)
+    pressed = context(run).get("type")
+    if pressed is not None:
+        held = held_search(folder)
+        text = held.get("query") or ""
+        kind = pressed if pressed in FILTERS and pressed != held.get("type") else ""
+    else:
+        text, kind = search_words(run.get("input"))
+    if not text:
+        send({"type": "error", "text": "type a symbol or a name to search, e.g. BTC or Apple"})
+        return
+    found, error = search(text, kind, CURL_TIMEOUT)
+    save(folder, FOUND, {"query": text, "type": kind, "at": time.time(), "found": found or [], "error": error})
+    if error:
+        send({"type": "error", "text": error})
+    else:
+        send({"type": "hud", "text": "Markets: %d found for %s" % (len(found), text)})
+
+
+def clear_search(run):
+    try:
+        os.remove(os.path.join(cache_dir(run), FOUND))
+    except OSError:
+        pass
+    send({"type": "hud", "text": "Markets: search closed"})
+
+
+def changed(run, listed, words):
+    """Keeps `listed` as the symbols followed and says `words`, or why it could not."""
+    if keep(run, listed):
+        send({"type": "hud", "text": "Markets: %s" % words})
+    else:
+        send({"type": "error", "text": "could not keep the list in its data folder"})
+
+
+def place(listed, key):
+    """Where the symbol `key` names stands in `listed`, or None."""
+    return next((i for i, s in enumerate(listed) if s["key"] == key), None)
+
+
+def follow(run):
+    """Adds the symbol its context hands on (a search row's) to the end of the list followed."""
+    symbol = entry(context(run).get("symbol"))
+    if not symbol:
+        send({"type": "error", "text": "got no symbol to add"})
+        return
+    listed = watchlist(run)
+    if any(s["key"] == symbol["key"] for s in listed):
+        send({"type": "hud", "text": "Markets follows %s already" % label(symbol)})
+    elif len(listed) >= MOST:
+        send({"type": "error", "text": "follows %d symbols at most: remove one first" % MOST})
+    else:
+        changed(run, listed + [symbol], "added %s" % label(symbol))
+
+
+def unfollow(run):
+    """Removes the symbol its context names."""
+    listed = watchlist(run)
+    at = place(listed, context(run).get("key"))
+    if at is None:
+        send({"type": "error", "text": "follows no such symbol"})
+        return
+    gone = listed.pop(at)
+    changed(run, listed, "removed %s" % label(gone))
+
+
+def move(run):
+    """Moves the symbol its context names one place up (by -1) or down (by 1)."""
+    listed = watchlist(run)
+    at, by = place(listed, context(run).get("key")), context(run).get("by")
+    if at is None or by not in (-1, 1) or not 0 <= at + by < len(listed):
+        send({"type": "error", "text": "can't move that symbol there"})
+        return
+    listed[at], listed[at + by] = listed[at + by], listed[at]
+    changed(run, listed, "%s moved %s" % (label(listed[at + by]), "up" if by < 0 else "down"))
 
 
 def refresh(run):
@@ -996,7 +1360,8 @@ def main():
         send({"type": "error", "text": "got a run message it could not read"})
         return
     command = run.get("command")
-    view = {"markets": listing, "bar": bar, "page": page, "refresh": refresh}.get(command)
+    view = {"markets": listing, "bar": bar, "page": page, "refresh": refresh, "search": search_list, "find": find,
+            "clear-search": clear_search, "add": follow, "remove": unfollow, "move": move}.get(command)
     if view:
         view(run)
     else:
