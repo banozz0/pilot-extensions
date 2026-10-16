@@ -39,7 +39,8 @@ unknown" once the gemini CLI is on PATH, "Not set up" before.
 Claude Code tokens (a footnote on the page and in the detail, not a limit): every assistant line in
 ~/.claude/projects/**/*.jsonl carries `message.usage`. Logs changed in the last 8 days are read from where the last run
 stopped and summed per minute into paths.cache, keyed by path, size and modification time. A run that cannot finish in
-its time hands the rest to one detached refresh (a lock keeps two from overlapping).
+its time hands the rest to one detached refresh (a lock keeps two from overlapping). The page, every 60 s while Home
+shows, gives a full count under 5 minutes old again rather than stat every log.
 
 Settings (the manifest's preferences): which providers the bar shows and whether its figure is the session or the most
 used window; pace on or off; other Codex folders and Gemini shown or hidden. Every bar shows the share left, CodexBar's
@@ -74,8 +75,10 @@ SEEN_KEEP = 512  # message ids remembered per log to fold repeated lines into on
 DETAIL_SCAN = 1.0  # seconds from start a detail may spend reading Claude logs; the rest goes to the background
 PAGE_SCAN = 3.0  # a page's command may take 5 s; the bar and popover read no Claude logs at all
 REFRESH_SCAN = 120.0
-LIVE_FRESH = 30  # a popover or page asks Codex again when its answer is older
-LIVE_STALE = 120  # the bar and detail hand an older answer to a background refresh
+LIVE_FRESH = 30  # a popover or the summary asks Codex again when its answer is older
+LIVE_STALE = 120  # the bar and detail hand an older answer to a background refresh; a page, every 60 s, asks past it
+TOKENS_FRESH = 300  # a page counts Claude Code tokens again only when its last full count is older: each count stats every log
+TOKENS_FILE = "claude-tokens.json"
 LIVE_WAIT = 3.0  # seconds a popover waits for Codex; a page waits 2 s, leaving time to count Claude Code tokens
 PAGE_WAIT = 2.0
 CODEX_TAILS = (256 * 1024, 4 * 1024 * 1024, 32 * 1024 * 1024)
@@ -602,10 +605,10 @@ def answer_email(answer):
     return email.lower() if isinstance(email, str) and email else None
 
 
-def codex_accounts(home, now, run, ask_until=None):
+def codex_accounts(home, now, run, ask_until=None, fresh=LIVE_FRESH):
     """Every Codex account, asked ones first. `ask_until` (a monotonic deadline) asks Codex again for an answer over
-    30 s old; without it an answer over 120 s old goes to one background refresh. Pilot's own account signing in now
-    or signed out is shown as such and never asked."""
+    `fresh` s old (30, a page's 120); without it an answer over 120 s old goes to one background refresh. Pilot's own
+    account signing in now or signed out is shown as such and never asked."""
     cache_dir = (run.get("paths") or {}).get("cache")
     setting, own, others = codex_homes(home, run)
     pending = {}
@@ -615,7 +618,7 @@ def codex_accounts(home, now, run, ask_until=None):
             pending[path] = link
     asked = setting + [p for p in own if p not in pending]
     answers = {p: load_live(cache_dir, p) for p in asked}
-    stale = [p for p in asked if not answers[p] or now - answers[p]["at"] > (LIVE_FRESH if ask_until else LIVE_STALE)]
+    stale = [p for p in asked if not answers[p] or now - answers[p]["at"] > (fresh if ask_until else LIVE_STALE)]
     if stale and ask_until:
         answers.update(ask_all(cache_dir, stale, ask_until))
     elif stale and cache_dir and shutil.which("codex"):
@@ -652,11 +655,11 @@ def gemini_state():
     return "installed" if shutil.which("gemini") else "missing"
 
 
-def limits(run, now=None, ask_until=None):
+def limits(run, now=None, ask_until=None, fresh=LIVE_FRESH):
     """Every provider's limits as a dict."""
     home = os.path.expanduser("~")
     now = time.time() if now is None else now
-    return {"now": now, "claude": claude_limits(home, now), "codex": codex_accounts(home, now, run, ask_until),
+    return {"now": now, "claude": claude_limits(home, now), "codex": codex_accounts(home, now, run, ask_until, fresh),
             "gemini": gemini_state(), "status": status_read((run.get("paths") or {}).get("cache"), now)}
 
 
@@ -815,11 +818,16 @@ def token_blocks(minutes):
     return out
 
 
-def claude_tokens(run, now, deadline):
-    """Claude Code tokens in the last 7 days and in the running 5-hour block, read from its logs until `deadline`."""
+def claude_tokens(run, now, deadline, reuse=0):
+    """Claude Code tokens in the last 7 days and in the running 5-hour block, read from its logs until `deadline`; a
+    full count under `reuse` s old is given again without reading a log."""
     home, cache_dir = os.path.expanduser("~"), (run.get("paths") or {}).get("cache")
     if not os.path.isdir(claude_root(home)):
         return {"state": "missing"}
+    last = read_json(os.path.join(cache_dir, TOKENS_FILE)) if cache_dir and reuse else None
+    at = number(last.get("at")) if isinstance(last, dict) else None
+    if at is not None and 0 <= now - at < reuse and last.get("state") == "ok" and last.get("complete"):
+        return last
     lock = take_lock(cache_dir) if cache_dir else None
     if cache_dir and lock is None:
         entries, complete = load_cache(cache_dir), False
@@ -841,7 +849,10 @@ def claude_tokens(run, now, deadline):
     week = sum(n for minute, n in minutes.items() if minute * 60 >= now - 7 * DAY)
     found = token_blocks(minutes)
     block = found[-1]["tokens"] if found and now < found[-1]["start"] + BLOCK else None
-    return {"state": "ok", "complete": complete, "week": week, "block": block}
+    tokens = {"state": "ok", "complete": complete, "week": week, "block": block}
+    if cache_dir and complete:
+        write_json(os.path.join(cache_dir, TOKENS_FILE), dict(tokens, at=now))
+    return tokens
 
 
 # Words
@@ -1329,8 +1340,9 @@ def show_bar(run):
 
 
 def show_page(run):
-    data = limits(run, ask_until=START + PAGE_WAIT)
-    tokens = claude_tokens(run, data["now"], START + PAGE_SCAN)
+    # Every 60 s while Home shows: Codex is asked when its answer is past the bar's 120 s, not at every run.
+    data = limits(run, ask_until=START + PAGE_WAIT, fresh=LIVE_STALE)
+    tokens = claude_tokens(run, data["now"], START + PAGE_SCAN, reuse=TOKENS_FRESH)
     send(blocks_answer(data, cards(data, page=True) + [links(data),
         {"type": "markdown", "text": token_note(tokens) + " " + FOOTNOTE},
         {"type": "buttons", "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]}],

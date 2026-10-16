@@ -765,9 +765,29 @@ class AIUsageTests(ExtensionTestCase):
     def test_no_claude_logs_no_token_counts(self):
         self.assertIn("No Claude Code logs on this Mac", self.page(home=self.box.home)[4]["text"])
 
+    def age_token_count(self, seconds=6 * MIN):
+        """The page's last full token count made older than the 5 minutes it is given again for."""
+        path = self.box.cache / "claude-tokens.json"
+        saved = json.loads(path.read_text())
+        path.write_text(json.dumps(dict(saved, at=saved["at"] - seconds)))
+
+    def test_a_page_every_minute_counts_tokens_and_asks_codex_less_often(self):
+        self.sven_like()
+        main = self.claude_fixture()
+        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[4]["text"])
+        self.write(main, [claude_line(self.now - 5 * MIN, "msg_c", out=300000)], append=True)
+        answer = json.loads(self.live_cache().read_text())
+        self.live_cache().write_text(json.dumps(dict(answer, at=answer["at"] - MIN)))  # the page's next run, a minute on
+        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[4]["text"],
+                      "a count under 5 minutes old is given again without reading a log")
+        self.assertEqual(len(self.codex_calls()), 1, "an answer under 120 s old is not asked again by the page")
+        self.age_token_count()
+        self.assertIn("1.5M in this 5-hour block", self.page(home=self.box.home)[4]["text"])
+
     def test_a_rerun_reads_only_the_new_bytes(self):
         main = self.claude_fixture()
         self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[4]["text"])
+        self.age_token_count()
         cache = json.loads((self.box.cache / "claude-usage.json").read_text())["files"]
         self.assertEqual(cache[str(main)]["offset"], main.stat().st_size)
         self.assertNotIn(str(self.projects / "-Users-x-old" / "s0.jsonl"), cache)
@@ -781,6 +801,7 @@ class AIUsageTests(ExtensionTestCase):
     def test_while_another_refresh_runs_it_answers_from_the_cache_at_once(self):
         self.claude_fixture()
         self.page(home=self.box.home)
+        self.age_token_count()
         with open(self.box.cache / "refresh.lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             text = self.page(home=self.box.home)[4]["text"]
