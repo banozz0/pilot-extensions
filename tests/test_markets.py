@@ -521,6 +521,17 @@ class SearchTests(MarketsCase):
         self.assertEqual(self.hud(self.run_ext("clear-search")), "Markets: search closed")
         self.assertNotIn("section", [b["type"] for b in self.page(pilot=self.PILOT)])
 
+    def test_the_search_box_searches_as_sven_types_and_emptied_closes_the_search(self):
+        box = self.page(pilot=self.PILOT)[0]
+        self.assertEqual((box["type"], box["live"], box["action"]["command"]), ("input", True, "find"))
+        self.assertNotIn("debounce", box, "Pilot's own pause")
+        self.run_ext("find", input="btc")
+        self.assertEqual(self.page(pilot=self.PILOT)[1]["type"], "section")
+        self.assertEqual(self.hud(self.run_ext("find", input="  ")), "Markets: search closed")
+        self.assertNotIn("section", [b["type"] for b in self.page(pilot=self.PILOT)])
+        self.assertEqual(self.run_ext("find").of_type("error")[0]["text"], "type a symbol or a name to search, e.g. BTC or Apple",
+                         "no input at all is no live run: said as before")
+
     def test_an_older_pilot_gets_no_search_box(self):
         self.assertNotIn("input", [b["type"] for b in self.page(pilot=self.OLDER)])
 
@@ -538,6 +549,23 @@ class SearchTests(MarketsCase):
                          "can't move that symbol there")
         items = self.run_ext("markets").items
         self.assertEqual([a["title"] for a in items[0]["actions"]][-2:], ["Move AAPL down", "Remove AAPL from Markets"])
+
+    def test_the_pages_rows_drag_into_order_by_their_key_and_new_place(self):
+        page = self.page(pilot=self.PILOT)
+        listed = next(b for b in page if b["type"] == "list")
+        self.assertEqual(listed["reorder"], {"command": "move"})
+        self.assertEqual([i["id"] for i in listed["items"]], ["stock:SPY", "stock:AAPL", "coin:BTC", "coin:ETH"])
+        self.assertEqual(self.hud(self.run_ext("move", context={"key": "stock:SPY", "to": 2})), "Markets: SPY moved to 3")
+        self.assertEqual(self.watched(), ["stock:AAPL", "coin:BTC", "stock:SPY", "coin:ETH"], "row 0 dropped on row 2")
+        self.assertEqual(self.hud(self.run_ext("move", context={"key": "coin:ETH", "to": 0.0})), "Markets: ETH moved to 1")
+        self.assertEqual(self.watched(), ["coin:ETH", "stock:AAPL", "coin:BTC", "stock:SPY"])
+        self.assertEqual(self.hud(self.run_ext("move", context={"key": "coin:BTC", "to": 1})), "Markets: BTC moved up", "⌥↑ is one place")
+        for odd in ({"key": "coin:ETH", "to": 4}, {"key": "coin:ETH", "to": -1}, {"key": "coin:ETH", "to": 0}, {"key": "coin:ETH", "to": 1.5},
+                    {"key": "coin:ETH", "to": "2"}, {"key": "coin:ETH", "to": True}, {"key": "coin:SOL", "to": 1}):
+            self.assertEqual(self.run_ext("move", context=odd).of_type("error")[0]["text"], "can't move that symbol there", odd)
+        self.assertEqual(self.watched(), ["coin:ETH", "coin:BTC", "stock:AAPL", "stock:SPY"])
+        popover = self.run_ext("bar", surface="popover", pilot=self.PILOT).of_type("blocks")[0]["blocks"]
+        self.assertNotIn("reorder", next(b for b in popover if b["type"] == "list"), "rows drag on the page alone")
 
     def test_pairs_keep_their_own_figures_and_need_no_rate(self):
         none = {"symbols": " "}

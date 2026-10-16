@@ -30,6 +30,9 @@ Omarchy T4 (Pilot fd3da77a): `hero` (glyph, value, unit, place, tone, `items` �
 high, low); `pilot.blocks` lists the kinds that Pilot draws, comma-separated, so send them only when listed (Weather does).
 Q138 (ADR 0010 amended 2026-10-16): `help` on a meter or section (hover words), a section's `icon` (`claude`, `openai`), blocks `note`
 (text, aside, help, icon) and `links` (≤6: title or icon, tone, word, help, actions); icons gain chart, plus, reset, info. AI usage sends them when listed.
+2026-10-17 (ADR 0010 amended): a page's `list` may carry `"reorder": {"command": "<no-view>"}`: rows with an `id` drag (and move with ⌥↑ ⌥↓),
+each move runs that command with context `{key, to}` (`to` the place after the move, from 0); an `input` may carry `"live": true` and
+`debounce` (ms, 50-2000, default 250): it runs as Sven types, blank text too, its HUD hidden. An older Pilot ignores both, so keep the old way in.
 
 ## Adding or changing an extension
 1. Make `extensions/<id>/` with `extension.json` (`id`, `title`, emoji `icon`, `version` x.y.z, `description`, `requires`, `permissions`,

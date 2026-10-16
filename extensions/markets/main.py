@@ -25,8 +25,9 @@ or as mini bars: one of Pilot's gauges a symbol, its meter where the price stand
 
 The symbols followed are a list kept in the data folder (watchlist.json), seeded from the Symbols setting; an edit of
 that setting replaces it. TradingView's symbol search (the one tradingview.com's search box reads) adds to it, from
-Hyper+Space's Add to Markets, which asks as Sven types, or the page's search box, whose answer the page then draws; the
-page's rows move up and down and are removed in place. A listing picked there that is not a stock or a fund (a coin pair,
+Hyper+Space's Add to Markets, which asks as Sven types, or the page's search box, which searches as he types too (Pilot's
+live input) and whose answer the page then draws; the page's rows are dragged into order (Pilot's reorder) or moved up and
+down, and removed in place. A listing picked there that is not a stock or a fund (a coin pair,
 a currency pair, an index, a future) is a pair: priced in its own figures, never converted, and on TradingView only.
 """
 import fcntl
@@ -1067,7 +1068,10 @@ def view_blocks(run, board, view):
     first = board.pinned[0] if board.pinned else None
     if "hero" in kinds and first and first.quote:
         found.append(first.hero())
-    found.append({"type": "list", "items": board.items(True) if page_ else [r.item() for r in board.rows]})
+    if page_:
+        found.append({"type": "list", "items": board.items(True), "reorder": {"command": "move"}})
+    else:
+        found.append({"type": "list", "items": [r.item() for r in board.rows]})
     name = SOURCES[board.source]["name"]
     if "note" in kinds:
         found.append({"type": "note", "text": board.status(), "aside": name, "icon": "chart"})
@@ -1240,7 +1244,7 @@ def search_blocks(run, kinds, followed):
     type), its answers as rows that add with Return, and Close."""
     blocks = []
     if "input" in kinds:
-        blocks.append({"type": "input", "placeholder": "Search TradingView: BTC, AAPL, EURUSD, SPX…",
+        blocks.append({"type": "input", "placeholder": "Search TradingView: BTC, AAPL, EURUSD, SPX…", "live": True,
                        "action": {"type": "run", "command": "find", "title": "Search"}})
     held = held_search(cache_dir(run))
     if not held:
@@ -1263,7 +1267,8 @@ def search_blocks(run, kinds, followed):
 
 def find(run):
     """The page's search: the words typed in its box, or a filter button's filter over the words held (pressed again,
-    every type); its answers are kept for the page to draw."""
+    every type); its answers are kept for the page to draw. The box searches as Sven types, so a box emptied closes the
+    search."""
     folder = cache_dir(run)
     pressed = context(run).get("type")
     if pressed is not None:
@@ -1272,6 +1277,9 @@ def find(run):
         kind = pressed if pressed in FILTERS and pressed != held.get("type") else ""
     else:
         text, kind = search_words(run.get("input"))
+        if not text and run.get("input") is not None:
+            clear_search(run)
+            return
     if not text:
         send({"type": "error", "text": "type a symbol or a name to search, e.g. BTC or Apple"})
         return
@@ -1331,14 +1339,21 @@ def unfollow(run):
 
 
 def move(run):
-    """Moves the symbol its context names one place up (by -1) or down (by 1)."""
+    """Moves the symbol its context names to its place `to` (from 0: a row dragged on the page, Pilot's reorder), or one
+    place up (by -1) or down (by 1)."""
     listed = watchlist(run)
-    at, by = place(listed, context(run).get("key")), context(run).get("by")
-    if at is None or by not in (-1, 1) or not 0 <= at + by < len(listed):
+    found = context(run)
+    at, by, to = place(listed, found.get("key")), found.get("by"), found.get("to")
+    if at is not None and to is None and by in (-1, 1):
+        to = at + by
+    if at is None or isinstance(to, bool) or not isinstance(to, (int, float)) or to != int(to) or not 0 <= to < len(listed) or to == at:
         send({"type": "error", "text": "can't move that symbol there"})
         return
-    listed[at], listed[at + by] = listed[at + by], listed[at]
-    changed(run, listed, "%s moved %s" % (label(listed[at + by]), "up" if by < 0 else "down"))
+    to = int(to)
+    symbol = listed.pop(at)
+    listed.insert(to, symbol)
+    words = "up" if to == at - 1 else "down" if to == at + 1 else "to %d" % (to + 1)
+    changed(run, listed, "%s moved %s" % (label(symbol), words))
 
 
 def refresh(run):
