@@ -1117,6 +1117,138 @@ def cards(data, page=False):
     return out + [gemini_card(data["gemini"])] if VIEW["gemini"] else out
 
 
+# The calm popover (Pilot Q138, design A): the same cards with their words cut. Pace words, emails, credit expiry and
+# status words go on hover; an account with nothing to show is one quiet line; the status pages, dashboards and Add
+# Codex account are one row of links beside Open page; the footnote stays on the page. Sent only to a Pilot that draws
+# note and links blocks.
+
+STALE = 30 * 60  # a read older than this says when it was read under its card's title
+NOT_ASKED_WORDS = "not asked"
+
+
+def draws_calm(run):
+    """Whether this Pilot draws the calm popover: its run message's `pilot.blocks` names note and links; an older Pilot
+    names neither, and gets the cards with their words."""
+    pilot = run.get("pilot")
+    listed = [k.strip() for k in str(pilot.get("blocks") or "").split(",")] if isinstance(pilot, dict) else []
+    return "note" in listed and "links" in listed
+
+
+def short_name(name):
+    """An account as a card's head shows it: an email's name before the @, a folder as it is."""
+    return name.split("@")[0] if name and "@" in name else name
+
+
+def sentence(words):
+    return words[0].upper() + words[1:] if words else words
+
+
+def calm_section(icon, title, subtitle, name, plan, help_words, blocks):
+    card = {"type": "section", "icon": icon, "title": title, "subtitle": subtitle, "aside": short_name(name),
+            "asideNote": plan, "help": " · ".join(w for w in help_words if w) or None, "blocks": blocks}
+    return {k: v for k, v in card.items() if v is not None}
+
+
+def calm_meter(w, since, now, headroom=False):
+    """A meter as meter() draws it, its words on hover in place of its line."""
+    m = meter(w, since, now, headroom)
+    if "note" in m:
+        m["help"] = sentence(m.pop("note"))
+    return m
+
+
+def calm_credits(found, now):
+    """Codex's limit reset credits as one note: how many, the next expiry, every expiry on hover."""
+    if not found or found["count"] <= 0:
+        return None
+    note = {"type": "note", "icon": "reset",
+            "text": "%d reset credit%s" % (found["count"], "" if found["count"] == 1 else "s")}
+    if found["expires"]:
+        first = min(found["expires"])
+        note["aside"] = "next expires " + time.strftime("%-d %b", time.localtime(first))
+        note["help"] = "Expire " + ", ".join(stamp_ahead(t, now) for t in found["expires"])
+    return note
+
+
+def calm_claude(claude, now):
+    if claude["state"] != "ok":
+        return calm_section("claude", "Claude", "unknown", claude.get("who"), None,
+                            [CLAUDE_UNKNOWN, claude.get("who"), claude.get("plan")], [])
+    read = "Updated " + stamp(claude["read_at"], now)
+    stale = now - claude["read_at"] > STALE
+    return calm_section("claude", "Claude", read if stale else None, claude.get("who"), claude.get("plan"),
+                        [claude.get("who"), None if stale else read],
+                        [calm_meter(w, "Claude Code reply", now) for w in claude["windows"]])
+
+
+def calm_codex(codex, now):
+    own = codex.get("own")
+    if codex["state"] != "ok":
+        words, text = codex_words(codex)
+        if own:
+            return calm_section("openai", "Codex", sentence(words), codex["name"], None, [codex["name"]],
+                                [{"type": "markdown", "text": text}] + account_buttons(codex, False))
+        quiet = NOT_ASKED_WORDS if (words, text) == NOT_ASKED else words
+        return calm_section("openai", "Codex", quiet, codex["name"], None, [text], [])
+    blocks = [calm_meter(w, codex["since"], now, headroom=True) for w in codex["windows"]]
+    credits = calm_credits(codex.get("reset_credits"), now)
+    if credits:
+        blocks.append(credits)
+    if codex["credits"] is not None:
+        blocks.append({"type": "stats", "items": [{"label": "Credits", "value": codex["credits"]}]})
+    if own and codex.get("same"):
+        blocks.append({"type": "markdown", "text": SAME})
+    if own:
+        blocks += account_buttons(codex, False)
+    read = codex_read(codex, now)
+    shown = codex["source"] != "live" or not codex["read_at"] or now - codex["read_at"] > STALE
+    return calm_section("openai", "Codex", read if shown else None, codex["name"], codex.get("plan"),
+                        [codex["name"], None if shown else read], blocks)
+
+
+def calm_gemini(state):
+    words, text = GEMINI_WORDS[state]
+    if state == "missing":
+        return calm_section(None, "Gemini", sentence(words), None, None, [], [{"type": "markdown", "text": text},
+                                                                            {"type": "buttons", "actions": [SET_UP_AI]}])
+    return calm_section(None, "Gemini", words, None, None, [text], [])
+
+
+def calm_cards(data):
+    """The cards, then the accounts with nothing to show, a quiet line each."""
+    now = data["now"]
+    out = [calm_claude(data["claude"], now)] + [calm_codex(c, now) for c in data["codex"]]
+    if VIEW["gemini"]:
+        out.append(calm_gemini(data["gemini"]))
+    return [c for c in out if c["blocks"]] + [c for c in out if not c["blocks"]]
+
+
+def calm_links(data):
+    """One row under the cards: each status page as its name and a dot (its word when not fine, the rest on hover),
+    the usage dashboards behind one icon, Add Codex account."""
+    items = []
+    for key, title in PROVIDERS:
+        status = data["status"].get(key)
+        link = {"title": title, "actions": [{"type": "open", "url": STATUS_PAGES[key] + "/", "title": "Open %s status page" % title}]}
+        if isinstance(status, dict) and isinstance(status.get("description"), str):
+            words = status["description"]
+            if status.get("updated"):
+                words += " · updated %s ago" % span(data["now"] - status["updated"])
+            level = {"minor": "warn", "maintenance": "warn", "major": "alert", "critical": "alert"}.get(status.get("indicator"))
+            link["tone"] = level or "fine"
+            if level:
+                link["word"] = status["indicator"]
+            link["help"] = "%s status: %s" % (title, words)
+        else:
+            link["help"] = "%s status unknown" % title
+        items.append(link)
+    items.append({"icon": "chart", "help": "Usage dashboards",
+                  "actions": [{"type": "open", "url": DASHBOARDS[key], "title": "%s usage dashboard" % title} for key, title in PROVIDERS]})
+    items.append({"icon": "plus", "help": "Add Codex account…",
+                  "actions": [{"type": "run", "command": "add-account", "title": "Add Codex account…"}]})
+    return {"type": "links", "items": items}
+
+
 def links(data):
     """CodexBar's menu rows under the cards: each status page with its word, the usage dashboards, Add Codex account."""
     items = []
@@ -1178,14 +1310,22 @@ def blocks_answer(data, blocks, every=SIGNING_IN_REFRESH):
     return answer
 
 
+def popover_blocks(data, run):
+    """The popover's blocks: calm for a Pilot that draws them, else the cards with their words and the footnote."""
+    if draws_calm(run):
+        return calm_cards(data) + [calm_links(data)]
+    return cards(data) + [links(data), {"type": "markdown", "text": FOOTNOTE}]
+
+
 def show_bar(run):
     if run.get("surface") == "popover":
         data = limits(run, ask_until=START + LIVE_WAIT)
-        send(blocks_answer(data, cards(data) + [links(data), {"type": "markdown", "text": FOOTNOTE}]))
+        send(blocks_answer(data, popover_blocks(data, run)))
         return
     data = limits(run)
     gauges, text, level = bar_line(data)
-    send({"type": "bar", "text": text, "gauges": gauges, "tone": level, "blocks": cards(data) + [links(data)]})
+    shown = calm_cards(data) + [calm_links(data)] if draws_calm(run) else cards(data) + [links(data)]
+    send({"type": "bar", "text": text, "gauges": gauges, "tone": level, "blocks": shown})
 
 
 def show_page(run):

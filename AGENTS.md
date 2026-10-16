@@ -28,6 +28,8 @@ its title and subtitle), a gauge's `icon` (`claude`, `openai`: Pilot's glyphs) a
 "buy milk", hidden or not.
 Omarchy T4 (Pilot fd3da77a): `hero` (glyph, value, unit, place, tone, `items` ≤3 stats) and `strip` (`items` ≤7: label plus glyph,
 high, low); `pilot.blocks` lists the kinds that Pilot draws, comma-separated, so send them only when listed (Weather does).
+Q138 (ADR 0010 amended 2026-10-16): `help` on a meter or section (hover words), a section's `icon` (`claude`, `openai`), blocks `note`
+(text, aside, help, icon) and `links` (≤6: title or icon, tone, word, help, actions); icons gain chart, plus, reset, info. AI usage sends them when listed.
 
 ## Adding or changing an extension
 1. Make `extensions/<id>/` with `extension.json` (`id`, `title`, emoji `icon`, `version` x.y.z, `description`, `requires`, `permissions`,

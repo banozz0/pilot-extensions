@@ -222,7 +222,9 @@ class ExtensionTestCase(unittest.TestCase):
             wanted = "no-view" if action["type"] == "run" else ("list", "detail", "no-view")  # a push in a popover: 165
             self.assertIn(names[action["command"]]["mode"], wanted, action)
 
-    BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons", "section", "chat", "input", "hero", "strip"}
+    BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons", "section", "chat", "input", "hero", "strip", "note", "links"}
+    ICONS = {"bubble", "moon", "sun", "pencil", "tag", "xmark", "arrow.up", "arrow.down", "terminal", "refresh", "chart", "plus",
+             "reset", "info"}  # Pilot's Extension.Item.Action.icons
     ROLES = ("user", "assistant", "tool")
     TONES = (None, "fine", "warn", "alert")
 
@@ -230,7 +232,9 @@ class ExtensionTestCase(unittest.TestCase):
         """Every block as Pilot decodes it (stories 161 and 165): a known type with its fields; a list's items and the
         buttons' actions as an item's; a section's blocks one level deep, a meter's resetsAt seconds since 1970, its mark 0
         to 100 and value a string; a chat's messages (20 at most), an input's run actions; a hero's value and at most 3
-        stats, a strip's 1 to 7 columns, each a label and a glyph, high or low (Omarchy ideas T4)."""
+        stats, a strip's 1 to 7 columns, each a label and a glyph, high or low (Omarchy ideas T4); Pilot Q138: a help on a
+        meter or section, a section's icon claude or openai, a note's text, a links row's 1 to 6 links, each a title or one
+        of Pilot's icons and its actions."""
         self.assertIsInstance(blocks, list)
         for block in blocks:
             self.assertIn(block.get("type"), types, block)
@@ -250,14 +254,32 @@ class ExtensionTestCase(unittest.TestCase):
                 if "mark" in block:
                     self.assertTrue(0 <= block["mark"] <= 100, block)
                 self.assertIsInstance(block.get("value", ""), str)
+                self.assertIsInstance(block.get("help", ""), str)
             elif kind == "section":
                 self.assertIsInstance(block.get("title", ""), str)
                 self.assertIsInstance(block.get("subtitle", ""), str)
+                self.assertIsInstance(block.get("help", ""), str)
+                self.assertIn(block.get("icon"), (None, "claude", "openai"))
                 self.assertBlocksShape(block["blocks"], self.BLOCK_TYPES - {"section"})
             elif kind == "list":
                 self.assertItemShape(block["items"])
             elif kind == "markdown":
                 self.assertIsInstance(block.get("text"), str)
+            elif kind == "note":
+                self.assertTrue(isinstance(block.get("text"), str) and block["text"], block)
+                for key in ("aside", "help"):
+                    self.assertIsInstance(block.get(key, ""), str)
+                self.assertIn(block.get("icon", "info"), self.ICONS)
+            elif kind == "links":
+                self.assertTrue(1 <= len(block["items"]) <= 6, block)
+                for link in block["items"]:
+                    self.assertTrue(isinstance(link.get("title"), str) or link.get("icon") in self.ICONS, link)
+                    self.assertIn(link.get("tone"), self.TONES)
+                    for key in ("word", "help"):
+                        self.assertIsInstance(link.get(key, ""), str)
+                    self.assertTrue(link["actions"])
+                    for action in link["actions"]:
+                        self.assertActionShape(action, ITEM_ACTIONS)
             elif kind == "hero":
                 self.assertIsInstance(block.get("value"), (str, int, float))
                 for key in ("glyph", "unit", "place"):

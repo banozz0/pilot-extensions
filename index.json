@@ -5,11 +5,11 @@
       "id": "ai-usage",
       "title": "AI usage",
       "icon": "📊",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "description": "See how much of your Claude and Codex limits is left this session and this week, how your pace compares, and when each resets, in the menu bar, as CodexBar shows it. Add a second Codex account with Codex's own sign-in.",
       "examples": [
         "Glance at the menu bar: Claude's and Codex's logo with the session left, amber once a window is 60% used, red from 85%",
-        "Click it: a card per provider and Codex account with its email and plan, each window's share left draining, its pace tick (green in reserve, red in deficit) and line, and its reset; Claude's per-model week, Codex's limit reset credits, each status page and usage dashboard, and Add Codex account for a second one"
+        "Click it: a card per provider and Codex account with its plan, each window's share left draining, its pace tick (red in deficit) and its reset, the pace in words on hover; Claude's per-model week, Codex's limit reset credits, and one row with each status page, the usage dashboards and Add Codex account"
       ],
       "requires": [
         "python3"
@@ -49,14 +49,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "f4cac9894ee46ecca73dc04a7c65a2581b612710a197e1b74cbafb3822fb8c08",
-          "size": 3602,
+          "sha256": "4360d8dfa86a737641286476012482e30cd6b5f4de70dbfd015d4f6ee4c8d206",
+          "size": 3620,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "78bc2e109d7aab85d6b651d4571ebbcf6b632a50e7b3ef2482b56adb43c64b72",
-          "size": 66865,
+          "sha256": "2c525b683373683edf40d66583fd448184f594f1364e2a6c7dd2dadadac9bfac",
+          "size": 73740,
           "executable": true
         }
       ]

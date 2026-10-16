@@ -321,6 +321,64 @@ class AIUsageTests(ExtensionTestCase):
         self.assertEqual(self.hud(), "Claude: Session 90% left, Weekly 10% left, Fable weekly 100% left · "
                                      "Codex: Session 89% left, Weekly 87% left")
 
+    CALM = {"blocks": "stats, meter, list, markdown, buttons, section, chat, input, hero, strip, note, links"}
+
+    def test_a_pilot_that_draws_notes_and_links_gets_the_calm_popover(self):
+        """Pilot Q138, design A: the cards keep their bars; the pace words, the email, when it was read and the credits'
+        expiry go on hover; credits are one note; the status pages, dashboards and Add Codex account one links row; no
+        footnote. The bar line carries the same blocks."""
+        self.sven_like()
+        n = self.now
+        blocks = self.popover(home=self.box.home, pilot=self.CALM)
+        self.check_quiet(json.dumps(blocks))
+        claude = card(blocks, "Claude")
+        self.assertEqual((claude["icon"], claude["aside"], claude["asideNote"], claude.get("subtitle")),
+                         ("claude", "sven", "Max 20x", None), "a fresh read says when only on hover")
+        self.assertEqual(claude["help"], "%s · Updated %s" % (EMAIL, hhmm(n - 3 * MIN)))
+        self.assertEqual(claude["blocks"][1], {"type": "meter", "label": "Weekly", "percent": 10, "value": "10% left", "tone": "alert",
+                                               "mark": 28.6, "markTone": "alert", "resetsAt": n + 2 * DAY,
+                                               "help": "19% in deficit · Runs out in 13h 21m"})
+        self.assertFalse([m for c in cards(blocks, "Claude") + cards(blocks, "Codex") for m in c["blocks"] if "note" in m])
+        codex = card(blocks, "Codex")
+        self.assertEqual((codex["icon"], codex["aside"], codex["asideNote"], codex.get("subtitle")), ("openai", "sven", "Plus", None))
+        day = lambda t: time.strftime("%-d %b %H:%M", time.localtime(t))
+        self.assertEqual(codex["blocks"][2], {"type": "note", "icon": "reset", "text": "2 reset credits",
+                                              "aside": "next expires " + time.strftime("%-d %b", time.localtime(n + 19 * DAY)),
+                                              "help": "Expire %s, %s" % (day(n + 19 * DAY), day(n + 27 * DAY))})
+        row = blocks[-1]
+        self.assertEqual([(i.get("title"), i.get("icon"), i.get("tone"), i.get("word"), i["help"]) for i in row["items"]], [
+            ("Claude", None, "fine", None, "Claude status: All Systems Operational"),
+            ("Codex", None, "fine", None, "Codex status: All Systems Operational"),
+            (None, "chart", None, None, "Usage dashboards"), (None, "plus", None, None, "Add Codex account…")])
+        self.assertEqual([a["url"] for a in row["items"][2]["actions"]],
+                         ["https://claude.ai/settings/usage", "https://chatgpt.com/codex/cloud/settings/analytics#usage"])
+        self.assertNotIn(ai_usage.FOOTNOTE, json.dumps(blocks), "the footnote stays on the page")
+        self.assertEqual(self.bar(home=self.box.home, pilot=self.CALM)["blocks"], blocks)
+        self.assertIn(ai_usage.FOOTNOTE, json.dumps(self.page(home=self.box.home, pilot=self.CALM)), "the page keeps every word")
+
+    def test_calm_status_words_and_quiet_accounts_last(self):
+        """A status that is not fine says its word beside its name; an account Codex is not asked for, or a Gemini whose
+        limit is unknown, is one quiet line after the cards, why on hover."""
+        n = self.now
+        self.status_pages({"codex": {"indicator": "minor", "description": "Partial System Degradation",
+                                     "updated": n - DAY}}, age=MIN)
+        self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, n + HOUR), live_window(30, 10080, n + DAY)))
+        self.write(self.box.home / ".codex-pro" / "auth.json", json.dumps({"bot": SECRET_SAMPLE}))
+        self.box.shim("gemini")
+        blocks = self.popover(home=self.box.home, pilot=self.CALM)
+        self.check_quiet(json.dumps(blocks))
+        sections = [b for b in blocks if b["type"] == "section"]
+        quiet = [b for b in sections if not b["blocks"]]
+        self.assertEqual(sections[-len(quiet):], quiet, "the quiet lines come after every card")
+        pro = next(b for b in quiet if b.get("aside") == "~/.codex-pro")
+        self.assertEqual((pro["icon"], pro["subtitle"], pro["help"]), ("openai", "not asked", ai_usage.NOT_ASKED[1]))
+        gemini = card(blocks, "Gemini")
+        self.assertEqual((gemini["subtitle"], gemini["blocks"]), ("limit unknown", []))
+        codex_link = blocks[-1]["items"][1]
+        self.assertEqual((codex_link["tone"], codex_link["word"], codex_link["help"]),
+                         ("warn", "minor", "Codex status: Partial System Degradation · updated 1 d ago"))
+        self.assertNotIn("tone", blocks[-1]["items"][0], "a status not read yet has no dot")
+
     def test_claude_takes_claude_codes_read_unless_the_status_line_is_10_min_newer(self):
         """CodexBar 2026-10-11 08:47: Claude Code's cached read said week 50% used (CodexBar: 50% left) while the status
         line said 49, and the session reset 09:49:59 UTC where the status line said 09:50."""
