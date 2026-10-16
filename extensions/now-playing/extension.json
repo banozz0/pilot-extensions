@@ -2,16 +2,13 @@
   "id": "now-playing",
   "title": "Now playing",
   "icon": "🎵",
-  "version": "1.0.0",
-  "description": "What Music or Spotify is playing, in the menu bar: click it for the track, how far in, play or pause, previous, next and favourite. Reads only a player that is already open, never starts one; with both open the one playing wins, then your pick. macOS asks once per player to let Pilot read it.",
-  "examples": ["The menu bar shows ♫ Daft Punk – Voyager; a lone ♫ while paused, nothing when no player is open", "Click it or type now playing: the album, a progress bar, Pause, Previous, Next and Favourite (Spotify: Copy link, as Spotify lets no script like a song)"],
+  "version": "1.1.0",
+  "description": "Whatever your Mac is playing, in the menu bar, as Control Center's Now Playing sees it: Music, Spotify, a YouTube tab in Chrome, Safari or Zen, any app. Click it for the track, how far in, play or pause, previous and next; Favourite while Music plays. Never starts a player, and asks no permission (Favourite asks once to control Music).",
+  "examples": ["A YouTube video plays in Chrome: the menu bar shows ♫ and its title; a lone ♫ while paused, nothing when nothing has played", "Click it or type now playing: where it plays, a progress bar, Pause, Previous and Next (Favourite while Music plays, Copy link for a Spotify track)"],
   "runtime": "process",
   "requires": ["python3", "osascript"],
   "permissions": {},
   "preferences": [
-    { "name": "player", "type": "dropdown", "title": "Prefer", "default": "auto",
-      "description": "Which player to show when Music and Spotify are both open and neither or both play. The one playing always wins.",
-      "data": [ { "title": "The last one playing", "value": "auto" }, { "title": "Music", "value": "music" }, { "title": "Spotify", "value": "spotify" } ] },
     { "name": "bar", "type": "dropdown", "title": "Menu bar shows", "default": "artist-title",
       "description": "The menu bar item while a track plays; paused it is a lone ♫.",
       "data": [ { "title": "Artist – Title", "value": "artist-title" }, { "title": "Title", "value": "title" }, { "title": "Just ♫", "value": "glyph" } ] }
@@ -19,10 +16,10 @@
   "surfaces": { "bar": { "command": "bar", "every": 60 } },
   "commands": [
     { "name": "now", "title": "Now playing", "mode": "detail", "run": "main.py" },
-    { "name": "playpause", "title": "Play or pause music", "icon": "⏯️", "mode": "no-view", "run": "main.py" },
+    { "name": "playpause", "title": "Play or pause", "icon": "⏯️", "mode": "no-view", "run": "main.py" },
     { "name": "next", "title": "Next track", "icon": "⏭️", "mode": "no-view", "run": "main.py" },
     { "name": "previous", "title": "Previous track", "icon": "⏮️", "mode": "no-view", "run": "main.py" },
-    { "name": "favourite", "title": "Favourite this track", "icon": "❤️", "mode": "no-view", "run": "main.py" },
+    { "name": "favourite", "title": "Favourite this Music track", "icon": "❤️", "mode": "no-view", "run": "main.py" },
     { "name": "bar", "title": "Now playing in the menu bar", "mode": "no-view", "hidden": true, "run": "main.py" }
   ]
 }
