@@ -341,6 +341,52 @@
       ]
     },
     {
+      "id": "markets",
+      "title": "Markets",
+      "icon": "📈",
+      "version": "1.0.0",
+      "description": "A stock, an ETF or a coin and its day's change in the menu bar; click it for every symbol you follow with its price, its change and a spark line of the day, each a click from its page in the browser. Free data from Nasdaq (US stocks and ETFs) and CoinGecko (coins), in euros or your currency, no account or key.",
+      "examples": [
+        "The menu bar shows SPY ▲0.28%: click it for SPY, AAPL, BTC and ETH with their prices and the day's line",
+        "Type markets: every symbol as a row; Return opens its page in the browser"
+      ],
+      "requires": [
+        "python3",
+        "curl"
+      ],
+      "commands": [
+        {
+          "name": "markets",
+          "title": "Markets",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [
+          "api.nasdaq.com",
+          "api.coingecko.com",
+          "api.frankfurter.dev"
+        ],
+        "clipboard": false,
+        "files": [],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "280fe3dd54556843feb34ca5f2044ecfd539efb63b8cf2d3235b3eea6786ae19",
+          "size": 2529,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "eb210aad606228b43107b0daaa86ba23ae30f564734577b04e83874d6182b1fb",
+          "size": 33743,
+          "executable": true
+        }
+      ]
+    },
+    {
       "id": "obsidian-search",
       "title": "Obsidian search",
       "icon": "🪨",

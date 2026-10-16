@@ -1,0 +1,31 @@
+{
+  "id": "markets",
+  "title": "Markets",
+  "icon": "📈",
+  "version": "1.0.0",
+  "description": "A stock, an ETF or a coin and its day's change in the menu bar; click it for every symbol you follow with its price, its change and a spark line of the day, each a click from its page in the browser. Free data from Nasdaq (US stocks and ETFs) and CoinGecko (coins), in euros or your currency, no account or key.",
+  "examples": ["The menu bar shows SPY ▲0.28%: click it for SPY, AAPL, BTC and ETH with their prices and the day's line", "Type markets: every symbol as a row; Return opens its page in the browser"],
+  "runtime": "process",
+  "requires": ["python3", "curl"],
+  "permissions": { "network": ["api.nasdaq.com", "api.coingecko.com", "api.frankfurter.dev"] },
+  "preferences": [
+    { "name": "symbols", "type": "text", "title": "Symbols", "default": "SPY, AAPL, BTC, ETH",
+      "description": "US stock and ETF tickers and coin symbols, in the order shown, up to 12. BTC, ETH, SOL and other big coins are known; write coin:XYZ for another coin, stock:XYZ for a stock that shares a coin's symbol." },
+    { "name": "pinned", "type": "text", "title": "In the menu bar", "default": "",
+      "description": "The symbol the menu bar shows. Empty: the first of your symbols." },
+    { "name": "bar", "type": "dropdown", "title": "Menu bar shows", "default": "change",
+      "data": [ { "title": "Symbol and change (SPY ▲0.28%)", "value": "change" },
+                { "title": "Symbol, price and change (SPY €688 ▲0.28%)", "value": "price" } ] },
+    { "name": "currency", "type": "dropdown", "title": "Currency", "default": "eur",
+      "description": "Coins are priced in it; US stocks are converted from dollars at the ECB's daily rate (shown with ≈).",
+      "data": [ { "title": "Euro (€)", "value": "eur" }, { "title": "US dollar ($)", "value": "usd" },
+                { "title": "Pound (£)", "value": "gbp" }, { "title": "Swiss franc (CHF)", "value": "chf" } ] }
+  ],
+  "surfaces": { "page": { "command": "page", "every": 120 }, "bar": { "command": "bar", "every": 120 } },
+  "commands": [
+    { "name": "markets", "title": "Markets", "mode": "list", "run": "main.py" },
+    { "name": "bar", "title": "Markets in the menu bar", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "page", "title": "Markets page", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "refresh", "title": "Refresh the prices", "mode": "no-view", "hidden": true, "run": "main.py" }
+  ]
+}
