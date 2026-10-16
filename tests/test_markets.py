@@ -60,8 +60,27 @@ FIXTURES = {
 }
 
 
-class MarketsTests(ExtensionTestCase):
+def tv(ticker, name, close, change, change_abs, high, low, description, currency, kind):
+    return {"s": ticker, "d": [name, close, change, change_abs, high, low, description, currency, kind, ticker.split(":")[0]]}
+
+
+STOCK_ROWS = [tv("NASDAQ:AAPL", "AAPL", 344.28, 0.6667, 2.28, 347.82, 342.03, "Apple Inc.", "USD", "stock"),
+              tv("AMEX:SPY", "SPY", 770.545, -0.1613, -1.245, 773.25, 770.48, "State Street SPDR S&P 500 ETF", "USD", "fund"),
+              tv("XETR:VWCE", "VWCE", 170.62, -0.1872, -0.32, 171.2, 170.1, "Vanguard FTSE All-World UCITS ETF", "EUR", "fund"),
+              tv("BMV:SPY", "SPY", 13900.0, 0.1, 13.9, 13950.0, 13800.0, "SPDR S&P 500 ETF", "MXN", "fund"),
+              tv("VIE:AAPL", "AAPL", 300.1, 0.5, 1.5, 301.0, 298.0, "Apple Inc.", "EUR", "stock")]
+COIN_ROWS = [tv("MEXC:BTCEUR", "BTCEUR", 73000.0, 1.0, 730.0, 73500.0, 72000.0, "Bitcoin / Euro", "EVC", "spot"),
+             tv("BITSTAMP:BTCEUR", "BTCEUR", 73116.65, -0.1739, -127.35, 73573.92, 72540.0, "Bitcoin / Euro", "EUR", "spot"),
+             tv("KRAKEN:BTCEUR", "BTCEUR", 73120.4, -0.17, -124.0, 73580.0, 72550.0, "Bitcoin / Euro", "EUR", "spot"),
+             tv("KRAKEN:ETHEUR", "ETHEUR", 2197.15, 0.9669, 21.04, 2213.09, 2159.76, "Ethereum / Euro", "EUR", "spot")]
+FIXTURES.update({"tv-global": {"totalCount": 5, "data": STOCK_ROWS}, "tv-crypto": {"totalCount": 4, "data": COIN_ROWS}})
+
+
+class MarketsCase(ExtensionTestCase):
+    """The sandbox, the fake curl and the helpers every Markets test shares; PREFS are each run's preferences unless the
+    test names its own."""
     EXTENSION = "markets"
+    PREFS = {}
     PILOT = {"repos": "/tmp/code", "terminal": "com.mitchellh.ghostty",
              "blocks": "stats,meter,list,markdown,buttons,section,chat,input,hero,strip,note,links"}
     OLDER = {"repos": "/tmp/code", "terminal": "com.mitchellh.ghostty"}
@@ -75,6 +94,10 @@ class MarketsTests(ExtensionTestCase):
             (self.fixtures / (name + ".json")).write_text(json.dumps(body))
         self.fake_curl()
 
+    def run_ext(self, command, **kwargs):
+        kwargs["preferences"] = dict(self.PREFS, **(kwargs.get("preferences") or {}))
+        return super().run_ext(command, **kwargs)
+
     def fake_curl(self, fail=None, delay=0):
         """A curl that logs its arguments and answers from the fixtures by host and path, `delay` s late, or fails as
         curl does; a URL with no fixture is a 404."""
@@ -85,6 +108,7 @@ class MarketsTests(ExtensionTestCase):
             body += 'echo "curl: %s" >&2; exit 6' % fail
         else:
             body += ('case "$url" in\n'
+                     '  *scanner.tradingview.com/global/scan) f=tv-global;; *scanner.tradingview.com/crypto/scan) f=tv-crypto;;\n'
                      '  *api.nasdaq.com/api/quote/*) s=${url#*/api/quote/}; s=${s%%%%/*}; f="nasdaq-$s-${url##*assetclass=}";;\n'
                      '  *coins/markets*) f=markets;; *api/v3/search*) f=search;; *frankfurter*) f=fx;; *) f=none;;\n'
                      'esac\n'
@@ -104,9 +128,11 @@ class MarketsTests(ExtensionTestCase):
     def asked(self, since=0):
         """What was asked from the `since`th call on, in short and sorted: AAPL/stocks, markets, search, fx."""
         short = []
-        for host, path, query, _ in self.calls()[since:]:
+        for host, path, query, args in self.calls()[since:]:
             if host == "api.nasdaq.com":
                 short.append("%s/%s" % (path.split("/")[3], query["assetclass"]))
+            elif host == "scanner.tradingview.com":
+                short.append("tv-%s-%s" % (path.split("/")[1], "find" if "in_range" in args else "tickers"))
             else:
                 short.append({"api.frankfurter.dev": "fx"}.get(host, path.rsplit("/", 1)[-1]))
         return sorted(short)
@@ -134,6 +160,11 @@ class MarketsTests(ExtensionTestCase):
     def rows(self, blocks):
         return {i["id"]: i for b in blocks if b["type"] == "list" for i in b["items"]}
 
+
+class NasdaqTests(MarketsCase):
+    """Nasdaq for stocks and ETFs, CoinGecko for coins: Markets 1.0.0's sources."""
+    PREFS = {"source": "nasdaq"}
+
     # ---- the bar and the cache ----
 
     def test_bar_shows_the_first_symbol_and_its_change_and_asks_each_source_once(self):
@@ -158,8 +189,8 @@ class MarketsTests(ExtensionTestCase):
     def test_a_falling_pin_is_alert_with_its_arrow_and_the_price_shows_when_asked(self):
         line = self.bar(preferences={"pinned": "aapl"})
         self.assertEqual((line["text"], line["tone"]), ("AAPL ▼0.28%", "alert"))
-        self.assertEqual(self.bar(preferences={"pinned": "BTC", "bar": "price"})["text"], "BTC €73.1k ▲1.44%")
-        self.assertEqual(self.bar(preferences={"pinned": "SPY", "bar": "price"})["text"], "SPY €689 ▲0.28%")
+        self.assertEqual(self.bar(preferences={"pinned": "BTC", "showPrice": True})["text"], "BTC €73.1k ▲1.44%")
+        self.assertEqual(self.bar(preferences={"pinned": "SPY", "showPrice": True})["text"], "SPY €689 ▲0.28%")
         self.assertEqual(self.bar(preferences={"pinned": "NOPE"})["text"], "SPY ▲0.28%", "an unlisted pin is the first")
 
     def test_offline_keeps_the_last_prices_marked_old_and_waits_a_minute_to_retry(self):
@@ -237,10 +268,10 @@ class MarketsTests(ExtensionTestCase):
         self.assertEqual(rows[1]["subtitle"].split("  ")[1], "Apple Inc.")
         self.assertEqual(len(rows[2]["subtitle"].split("  ")[0]), 16, "a coin's last 24 hours in 16 bars")
         self.assertEqual(rows[0]["actions"][0], {"type": "open", "url": "https://www.nasdaq.com/market-activity/etfs/spy",
-                                                 "title": "Open SPY in the browser"})
+                                                 "title": "Open SPY on Nasdaq"})
         self.assertEqual(rows[1]["inline"][0]["url"], "https://www.nasdaq.com/market-activity/stocks/aapl")
         self.assertEqual(rows[2]["inline"][0], {"type": "open", "url": "https://www.coingecko.com/en/coins/bitcoin",
-                                                "title": "Open in the browser", "icon": "🌐"})
+                                                "title": "Open on CoinGecko", "icon": "🌐"})
         self.assertEqual(rows[1]["actions"][1], {"type": "copy", "text": "AAPL ≈ €305.14", "title": "Copy the price"})
         self.assertRegex(note["text"], r"^Updated \d\d:\d\d · US market (open until|closed · opens) ")
         self.assertEqual((note["aside"], links["items"][0]["actions"][0]["command"]), ("Nasdaq · CoinGecko", "refresh"))
@@ -276,6 +307,106 @@ class MarketsTests(ExtensionTestCase):
         self.assertEqual(result.of_type("hud")[0]["text"],
                          "Markets: SPY ▲ 0.28%, AAPL ▼ 0.28%, BTC ▲ 1.44%, ETH ▼ 0.57%")
         self.assertEqual(len(self.calls()), 5 + 4, "SPY as an ETF, AAPL, the coins and the rate again")
+
+
+class TradingViewTests(MarketsCase):
+    """TradingView's screener, the default source: one call for the stocks, one for the coins, a row opening there."""
+
+    def test_default_source_finds_each_listing_once_and_asks_by_ticker_from_then_on(self):
+        line = self.bar()
+        self.assertEqual((line["text"], line["tone"]), ("SPY ▼0.16%", "alert"))
+        self.assertEqual(self.asked(), ["fx", "tv-crypto-find", "tv-global-find"])
+        self.assertEqual(self.bar()["text"], "SPY ▼0.16%")
+        self.assertEqual(len(self.calls()), 3, "fresh answers are not asked again")
+        self.age_all(8 * 86400)
+        self.blocks_message("bar", "popover")
+        self.settle()
+        self.assertEqual(self.asked(since=3), ["tv-crypto-tickers", "tv-global-tickers"], "the listings found are kept")
+        bodies = " ".join(a for h, _, _, a in self.calls()[3:] if h == "scanner.tradingview.com")  # the two scans run side by side
+        self.assertIn('"tickers":["KRAKEN:BTCEUR","KRAKEN:ETHEUR"]', bodies)
+        self.assertIn('"tickers":["AMEX:SPY","NASDAQ:AAPL"]', bodies)
+
+    def test_rows_open_on_tradingview_in_euros(self):
+        rows = self.rows(self.popover(pilot=self.PILOT))
+        self.assertEqual(rows["stock:SPY"]["actions"][0], {"type": "open", "url": "https://www.tradingview.com/symbols/AMEX-SPY/",
+                                                           "title": "Open SPY on TradingView"})
+        self.assertEqual(rows["coin:BTC"]["inline"][0]["url"], "https://www.tradingview.com/symbols/KRAKEN-BTCEUR/",
+                         "a pair in euros on the first exchange preferred, never MEXC's EVC")
+        self.assertEqual(rows["stock:AAPL"]["title"], "AAPL · ≈ €%.2f" % (344.28 * 0.89222))
+        self.assertEqual(rows["coin:BTC"]["title"], "BTC · €73,120")
+        self.assertEqual((rows["coin:BTC"]["badges"], rows["stock:AAPL"]["subtitle"]),
+                         ([{"text": "▼ 0.17%", "tone": "alert"}], "Apple Inc."), "no line from one reading")
+
+    def test_the_line_grows_from_the_prices_read(self):
+        self.popover(preferences={"symbols": "BTC"})
+        rows = json.loads((self.fixtures / "tv-crypto.json").read_text())
+        rows["data"][2]["d"][1] = 74000.0
+        (self.fixtures / "tv-crypto.json").write_text(json.dumps(rows))
+        self.age_all(400)
+        self.popover(preferences={"symbols": "BTC"})
+        self.settle()
+        btc = self.rows(self.popover(preferences={"symbols": "BTC"}))["coin:BTC"]
+        self.assertEqual(btc["subtitle"], "▁█  Bitcoin / Euro")
+
+    def test_an_exchange_written_is_asked_for_that_listing_in_its_money(self):
+        rows = self.rows(self.popover(preferences={"symbols": "XETR:VWCE, BTC", "pinned": "VWCE"}, pilot=self.PILOT))
+        self.assertEqual(self.asked(), ["tv-crypto-find", "tv-global-tickers"], "no lookup, no rate: both in euros")
+        vwce = rows["stock:XETR:VWCE"]
+        self.assertEqual((vwce["title"], vwce["actions"][0]["url"]), ("VWCE · €170.62", "https://www.tradingview.com/symbols/XETR-VWCE/"))
+
+    def test_a_coins_move_is_said_since_midnight_utc(self):
+        hero = self.popover(preferences={"pinned": "BTC"}, pilot=self.PILOT)[0]
+        self.assertEqual([i["label"] for i in hero["items"]], ["Since 00:00 UTC", "Day range", "As of"])
+        spy = self.popover(preferences={"pinned": "SPY"}, pilot=self.PILOT)[0]
+        self.assertEqual([i["label"] for i in spy["items"]], ["Today", "Day range", "Prev close"])
+
+    def test_an_unknown_ticker_says_so(self):
+        rows = self.rows(self.popover(preferences={"symbols": "ZZZZQ, SPY"}))
+        self.assertEqual((rows["stock:ZZZZQ"]["subtitle"], rows["stock:ZZZZQ"]["badges"]),
+                         ("TradingView knows no ZZZZQ", [{"text": "no price", "tone": "warn"}]))
+        self.assertTrue(rows["stock:SPY"]["title"].startswith("SPY · ≈ €"))
+
+
+class BarTests(MarketsCase):
+    """The menu bar's styles and parts, on Nasdaq and CoinGecko's answers."""
+    PREFS = {"source": "nasdaq"}
+
+    def test_several_side_by_side_fit_pilots_24_characters(self):
+        line = self.bar(preferences={"pinned": "SPY, BTC"})
+        self.assertEqual((line["text"], line["tone"]), ("SPY ▲0.28% · BTC ▲1.44%", "fine"))
+        line = self.bar(preferences={"pinned": "SPY, AAPL"})
+        self.assertEqual(line["text"], "SPY ▲0.28% · AAPL ▼0.28%")
+        self.assertNotIn("tone", line, "mixed moves: the arrows say it")
+        self.assertEqual(self.bar(preferences={"pinned": "SPY, AAPL, BTC", "showPrice": True})["text"], "SPY ▲0.28% · AAPL ▼0.28%",
+                         "prices dropped first, then the symbols that do not fit")
+
+    def test_several_in_turn_move_on_each_bar_run_never_on_a_click(self):
+        prefs = {"pinned": "SPY, AAPL", "several": "rotate"}
+        self.assertEqual(self.bar(preferences=prefs)["text"], "SPY ▲0.28%")
+        self.assertEqual(self.bar(preferences=prefs)["text"], "AAPL ▼0.28%")
+        self.popover(preferences=prefs)
+        self.assertEqual(self.bar(preferences=prefs)["text"], "SPY ▲0.28%")
+
+    def test_the_parts_shown_are_the_users(self):
+        prefs = {"pinned": "SPY", "showSymbol": False, "showPrice": True, "showChange": True}
+        self.assertEqual(self.bar(preferences=prefs)["text"], "€689 ▲0.28% +€1.95")
+        self.assertEqual(self.bar(preferences=dict(prefs, showPrice=False, showPercent=False, showChange=False))["text"],
+                         "SPY ▲0.28%", "nothing ticked: the symbol and its change")
+
+    def test_text_with_the_days_line(self):
+        self.assertRegex(self.bar(preferences={"style": "line"})["text"], r"^SPY [▁▂▃▄▅▆▇█]{6} ▲0\.28%$")
+
+    def test_mini_bars_one_gauge_a_symbol_each_in_its_tone(self):
+        line = self.bar(preferences={"style": "bars", "pinned": "SPY, AAPL, BTC, ETH"})
+        self.assertEqual(line["text"], "")
+        self.assertNotIn("tone", line)
+        spy, aapl, btc = line["gauges"]
+        self.assertEqual((spy["label"], spy["text"], spy["tone"]), ("SP", "▲0.28%", "fine"))
+        self.assertAlmostEqual(spy["meters"][0], (771.79 - 765) / (778 - 765) * 100)
+        self.assertEqual((aapl["label"], aapl["meters"], aapl["tone"]), ("AA", [50.0], "alert"))
+        self.assertEqual(btc["text"], "▲1.44%")
+        line = self.bar(preferences={"style": "bars", "showSymbol": False})
+        self.assertNotIn("label", line["gauges"][0])
 
 
 class MarketWords(unittest.TestCase):
@@ -322,6 +453,7 @@ class MarketWords(unittest.TestCase):
     def test_figures(self):
         self.assertEqual([markets.figure(v) for v in (73093, 342.0, 0.0612345)], ["73,093", "342.00", "0.06123"])
         self.assertEqual([markets.short(v) for v in (73093, 688.6, 4.2)], ["73.1k", "689", "4.20"])
+        self.assertEqual([markets.amount(v) for v in (0.5376, 1196.7, 0.004321)], ["0.54", "1,196.70", "0.004321"])
         self.assertEqual([markets.change(v) for v in (1.4381, -0.28, 0.001, None)], ["▲ 1.44%", "▼ 0.28%", "0.00%", "–"])
         self.assertEqual([markets.tone(v) for v in (1, -1, 0.004)], ["fine", "alert", None])
         self.assertEqual([markets.number(v) for v in ("$1,342.00", "+2.19", "-0.28%", "UNCH", "N/A")], [1342, 2.19, -0.28, 0, None])

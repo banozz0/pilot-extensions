@@ -344,11 +344,11 @@
       "id": "markets",
       "title": "Markets",
       "icon": "📈",
-      "version": "1.0.0",
-      "description": "A stock, an ETF or a coin and its day's change in the menu bar; click it for every symbol you follow with its price, its change and a spark line of the day, each a click from its page in the browser. Free data from Nasdaq (US stocks and ETFs) and CoinGecko (coins), in euros or your currency, no account or key.",
+      "version": "1.1.0",
+      "description": "Stocks, ETFs and coins and their day's change in the menu bar, as text, with the day's line or as mini bars, one symbol, several side by side or in turn; click it for every symbol you follow with its price, its change and its line, each a click from its page on TradingView. Free data from TradingView, or Nasdaq and CoinGecko, in euros or your currency, no account or key.",
       "examples": [
-        "The menu bar shows SPY ▲0.28%: click it for SPY, AAPL, BTC and ETH with their prices and the day's line",
-        "Type markets: every symbol as a row; Return opens its page in the browser"
+        "The menu bar shows SPY ▲0.28% · BTC ▲1.4%: click it for every symbol with its price and the day's line",
+        "Type markets: every symbol as a row; Return opens it on TradingView"
       ],
       "requires": [
         "python3",
@@ -363,6 +363,7 @@
       ],
       "permissions": {
         "network": [
+          "scanner.tradingview.com",
           "api.nasdaq.com",
           "api.coingecko.com",
           "api.frankfurter.dev"
@@ -374,14 +375,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "280fe3dd54556843feb34ca5f2044ecfd539efb63b8cf2d3235b3eea6786ae19",
-          "size": 2529,
+          "sha256": "878186532a600be50f2e5065311d6f566c00dacc81a3f7e2141ddcc4d746cc8d",
+          "size": 4035,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "eb210aad606228b43107b0daaa86ba23ae30f564734577b04e83874d6182b1fb",
-          "size": 33743,
+          "sha256": "7ef344b39b59f602e355a6e98bff9aa9436345030a6e16cafe0d8156a218fb5e",
+          "size": 47429,
           "executable": true
         }
       ]
