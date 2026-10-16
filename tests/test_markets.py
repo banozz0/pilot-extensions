@@ -401,10 +401,10 @@ class BarTests(MarketsCase):
         self.assertEqual(line["text"], "")
         self.assertNotIn("tone", line)
         spy, aapl, btc = line["gauges"]
-        self.assertEqual((spy["label"], spy["text"], spy["tone"]), ("SP", "▲0.28%", "fine"))
+        self.assertEqual((spy["label"], spy["text"], spy["tone"]), ("SPY", "▲0.28%", "fine"))
         self.assertAlmostEqual(spy["meters"][0], (771.79 - 765) / (778 - 765) * 100)
-        self.assertEqual((aapl["label"], aapl["meters"], aapl["tone"]), ("AA", [50.0], "alert"))
-        self.assertEqual(btc["text"], "▲1.44%")
+        self.assertEqual((aapl["label"], aapl["meters"], aapl["tone"]), ("AAPL", [50.0], "alert"))
+        self.assertEqual((btc["label"], btc["text"]), ("BTC", "▲1.44%"))
         line = self.bar(preferences={"style": "bars", "showSymbol": False})
         self.assertNotIn("label", line["gauges"][0])
 

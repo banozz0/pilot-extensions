@@ -50,6 +50,7 @@ BAR_SPARK = 6  # the menu bar's line
 LONGEST = 24  # Pilot's bar text
 GAUGES = 3  # Pilot's gauges a bar item
 GAUGE_TEXT = 6
+GAUGE_LABEL = 5  # Pilot's gauge label since 2026-10-16; an older Pilot cuts it to two
 BARS = "▁▂▃▄▅▆▇█"
 QUOTES = "quotes.json"
 NAMES = "names.json"
@@ -795,10 +796,10 @@ class Row:
         return found or plain
 
     def gauge(self, show):
-        """A mini bar: two letters of its symbol, a meter where the price stands between the day's low and high, and the
+        """A mini bar: its symbol (five characters at most), a meter where the price stands between the day's low and high, and the
         first of its change, its change in money or its price that fits six characters, in its own tone."""
         q = self.quote
-        gauge = {"label": self.symbol[:2] if show["symbol"] else ""}
+        gauge = {"label": self.symbol[:GAUGE_LABEL] if show["symbol"] else ""}
         low, high, price = q.get("low"), q.get("high"), q.get("price")
         if None not in (low, high, price):
             gauge["meters"] = [50 if high <= low else min(max((price - low) / (high - low) * 100, 0), 100)]
