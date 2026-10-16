@@ -12,12 +12,16 @@ is ever started. Should a macOS update close that door, the item says so with a 
 Favourite is the one thing Now Playing can't do: it shows only while Music plays, and asks Music itself (its favorited
 track property, «class pLov»), which raises macOS's Automation prompt once. A Spotify track carries its link instead.
 
-The popover's track is a row: its artwork (Now Playing's own, written once a track to the cache and shrunk by macOS's
-sips to a thumbnail Pilot draws in the row) with the title and the artist beside it; a click goes to what plays. In
+The popover's track is a row: its artwork with the title and the artist beside it; a click goes to what plays. The
+artwork is Now Playing's own when a player hands it over (macOS lists most players' artwork without its bytes), else
+asked of its source once a track: Music's own artwork (the same Automation prompt as Favourite), Spotify's cover
+(Spotify asks once, then i.scdn.co), a YouTube tab's video thumbnail (the tab's address from the browser, the same
+prompt as going to the tab, then i.ytimg.com). Either is shrunk by macOS's sips to the thumbnail Pilot draws. In
 Chrome, its kin (Brave, Edge, Vivaldi) and Safari that is the tab whose title holds the track's, asked of the browser
 itself (macOS asks once whether Pilot may control it); anywhere else, the app.
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -26,16 +30,22 @@ import subprocess
 import sys
 import time
 
-BUDGET = {"bar": 1.6, "detail": 1.6, "popover": 4.0, "control": 20.0}  # seconds; Pilot's limits 2, 2, 5 and 30
+BUDGET = {"bar": 1.4, "detail": 1.4, "popover": 4.0, "control": 20.0}  # seconds; Pilot's limits 2, 2, 5 and 30, less
+# Python's start (macOS's 3.9 takes a few tenths) and the answer
 SETTLE = 0.4  # a player's new track shows this long after a control
 REFRESH = {"playing": 5, "idle": 15}  # an open popover asks again; the bar is Pilot's 60 s
 GLYPH = "♫"
 BAR_ROOM = 24 - 2  # Pilot's bar text is 24 characters; "♫ " takes two
 MUSIC = "com.apple.Music"
+SPOTIFY = "com.spotify.client"
 COMMANDS = {"playpause": 2, "next": 4, "previous": 5}  # MediaRemote's MRMediaRemoteCommand
 VERBS = {"playpause": "play or pause", "next": "skip", "previous": "go back to", "favourite": "favourite"}
 THUMB = 64  # the artwork's longest side in pixels: Pilot draws it at 28 points, twice that on a Retina screen
 LARGEST_THUMB = 64 * 1024  # Pilot keeps a row's picture up to 64 KB
+CURL_TIMEOUT = 3
+# The hosts artwork is fetched from, and a YouTube address's video id (watch, shorts, live, youtu.be, music.youtube.com).
+ART_HOSTS = ("https://i.scdn.co/", "https://i.ytimg.com/")
+YOUTUBE = re.compile(r"^https://(?:(?:www|m|music)\.)?(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})")
 # A bar title without what only clutters it (Raycast's Spotify Player cleans the same way): (feat. …), […], remasters.
 CLUTTER = re.compile(r"\s*(\((feat|ft|with)\.?\s[^)]*\)|\[[^\]]*\]|\([^)]*remaster[^)]*\)|\s-\s[^-]*remaster.*$)", re.I)
 
@@ -162,11 +172,79 @@ def now_playing(deadline, command=None, art=""):
             "artwork": os.path.join(art, os.path.basename(found["artwork"])) if art and text(found.get("artwork")) else None}
 
 
-def thumbnail(track, deadline):
-    """The track's artwork as a small JPEG in base64, made once a track by sips beside the artwork (the other tracks'
-    files removed); None without artwork, or when sips fails or runs out of time."""
+# Music's artwork: the current track's first, its bytes written by osascript itself to the path given; "none" without one.
+MUSIC_ART = '''on run argv
+	if not (application "Music" is running) then return "none"
+	tell application "Music"
+		if (count of artworks of current track) is 0 then return "none"
+		set picture to raw data of artwork 1 of current track
+	end tell
+	set f to open for access (POSIX file (item 1 of argv)) with write permission
+	set eof f to 0
+	write picture to f
+	close access f
+	return "ok"
+end run'''
+SPOTIFY_ART = '''if application "Spotify" is running then
+	tell application "Spotify" to return artwork url of current track
+end if
+return ""'''
+
+
+def art_key(track):
+    return hashlib.sha1("|".join((track["title"], track["artist"], track["album"], track["bundle"])).encode("utf-8")).hexdigest()[:12]
+
+
+def download(url, path, deadline):
+    """Fetches an artwork URL (only from ART_HOSTS) to `path`; whether it came."""
+    if not url.startswith(ART_HOSTS):
+        return False
+    binary = shutil.which("curl") or "/usr/bin/curl"
+    left = min(CURL_TIMEOUT, deadline - time.monotonic())
+    if left < 0.2:
+        return False
+    try:
+        done = subprocess.run([binary, "-sS", "--fail", "--max-time", "%.1f" % left, "-o", path, url], stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=left + 1)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0 and os.path.isfile(path)
+
+
+def ask_source(track, path, deadline):
+    """Asks what plays for its artwork, written to `path`: True when written, False when it has none (or may not be
+    asked), None when it did not answer in time (asked again next time)."""
+    try:
+        if track["bundle"] == MUSIC:
+            return osascript(["-e", MUSIC_ART, path], deadline) == "ok"
+        if track["bundle"] == SPOTIFY:
+            return download(osascript(["-e", SPOTIFY_ART], deadline), path, deadline)
+        if track["bundle"] in TAB_URLS and track["title"]:
+            video = YOUTUBE.match(osascript(["-e", TAB_URLS[track["bundle"]], track["title"]], deadline))
+            return bool(video) and download("https://i.ytimg.com/vi/%s/mqdefault.jpg" % video.group(1), path, deadline)
+    except Trouble as trouble:
+        return None if trouble.why == "slow" else False
+    return False
+
+
+def artwork(track, folder, deadline):
+    """The track's thumbnail in base64: from Now Playing's own artwork, else from its source, asked once a track (a
+    `.none` file remembers a source with none, so a popover asked every few seconds asks it once); None without."""
     source = track.get("artwork")
-    if not source or not os.path.isfile(source):
+    if not source:
+        source = os.path.join(folder, "art-%s.img" % art_key(track))
+        none = source[:-len(".img")] + ".none"
+        if not os.path.isfile(source) and not os.path.isfile(none):
+            found = ask_source(track, source, deadline)
+            if found is False:
+                open(none, "w").close()
+    return thumbnail(source, deadline)
+
+
+def thumbnail(source, deadline):
+    """The artwork at `source` as a small JPEG in base64, made once a track by sips beside it (the other tracks' files
+    removed); None without artwork, or when sips fails or runs out of time."""
+    if not os.path.isfile(source):
         return None
     folder, name = os.path.split(source)
     thumb = os.path.join(folder, name[:-len(".img")] + ".jpg")
@@ -314,13 +392,14 @@ def art_folder(run):
 def answer(run, budget, art=True):
     """(what plays or None, its blocks, the trouble or None); `art` reads the artwork, which only the popover shows."""
     deadline = time.monotonic() + budget
+    folder = art_folder(run) if art else ""
     try:
-        track = now_playing(deadline, art=art_folder(run) if art else "")
+        track = now_playing(deadline, art=folder)  # Now Playing's own artwork, when a player hands it over
     except Trouble as trouble:
         return None, drawable(run, [{"type": "note", "text": trouble_words(trouble), "icon": "info"}]), trouble
     if track is None:
         return None, [{"type": "markdown", "text": "Nothing is playing: play something in any app or browser tab."}], None
-    return track, [track_section(track, thumbnail(track, deadline))], None
+    return track, [track_section(track, artwork(track, folder, deadline) if folder else None)], None
 
 
 def bar(run):
@@ -381,9 +460,23 @@ TAB_SCRIPT = '''on run argv
 end run'''
 CHROMIUM = {"name": "title", "select": "set active tab index of w to i"}
 # The browsers whose tabs can be picked by title, by bundle id, each its script.
-TABS = {bundle: TAB_SCRIPT % dict(words, bundle=bundle) for bundle, words in (
-    ("com.google.Chrome", CHROMIUM), ("com.brave.Browser", CHROMIUM), ("com.microsoft.edgemac", CHROMIUM),
-    ("com.vivaldi.Vivaldi", CHROMIUM), ("com.apple.Safari", {"name": "name", "select": "set current tab of w to t"}))}
+BROWSERS = (("com.google.Chrome", CHROMIUM), ("com.brave.Browser", CHROMIUM), ("com.microsoft.edgemac", CHROMIUM),
+            ("com.vivaldi.Vivaldi", CHROMIUM), ("com.apple.Safari", {"name": "name", "select": "set current tab of w to t"}))
+TABS = {bundle: TAB_SCRIPT % dict(words, bundle=bundle) for bundle, words in BROWSERS}
+# The address of that same tab, for its artwork: nothing selected, nothing brought forward, "" when no tab holds it.
+TAB_URL = '''on run argv
+	if not (application id "%(bundle)s" is running) then return ""
+	set wanted to item 1 of argv
+	tell application id "%(bundle)s"
+		repeat with w in windows
+			repeat with t in tabs of w
+				if %(name)s of t contains wanted then return URL of t
+			end repeat
+		end repeat
+	end tell
+	return ""
+end run'''
+TAB_URLS = {bundle: TAB_URL % dict(words, bundle=bundle) for bundle, words in BROWSERS}
 
 
 def open_app(bundle):

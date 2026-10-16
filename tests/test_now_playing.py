@@ -1,8 +1,9 @@
 import base64
+import importlib.util
 import json
 import sys
 
-from harness import ExtensionTestCase
+from harness import EXTENSIONS, ExtensionTestCase
 
 # A fake osascript: as JavaScript it answers scenario.json's `now` as Now Playing would (a command, the argument after the
 # script, logged and `after` swapped in), as AppleScript it answers Music's favourite; every call is logged (calls.jsonl)
@@ -32,6 +33,18 @@ if args[:2] == ["-l", "JavaScript"]:
                 f.write(scene["art"])
         now = dict(now, artwork=os.path.basename(path))
     print(json.dumps(now))
+elif "raw data of artwork" in args[1]:  # Music's artwork, written to the path given
+    if scene.get("denyArt"):
+        sys.stderr.write("execution error: Not authorized to send Apple events to Music. (-1743)\n")
+        sys.exit(1)
+    if scene.get("musicArt"):
+        with open(args[2], "w") as f:
+            f.write(scene["musicArt"])
+    print("ok" if scene.get("musicArt") else "none")
+elif "artwork url" in args[1]:
+    print(scene.get("spotifyArt", ""))
+elif "return URL of t" in args[1]:
+    print(scene.get("tabURL", ""))
 elif "tabs of w" in args[1]:
     if scene.get("denyTab"):
         sys.stderr.write("execution error: Not authorized to send Apple events to Google Chrome. (-1743)\n")
@@ -90,6 +103,21 @@ class NowPlayingTests(ExtensionTestCase):
 
     def apple_events(self):
         return [c for c in self.calls() if c[:2] != ["-l", "JavaScript"]]
+
+    def fake_art_tools(self):
+        """sips copies the artwork as the thumbnail; curl writes the URL it fetched into the file, so a test reads back
+        what was asked."""
+        self.box.shim("sips", 'printf "%%s\\n" "sips $*" >> "%s"; cp "$6" "$8"' % self.box.log)
+        self.box.shim("curl", 'printf "%%s\\n" "curl $7" >> "%s"; printf "%%s" "$7" > "$6"' % self.box.log)
+
+    def art_asks(self):
+        """The artwork asks made of a player: Music's, Spotify's, a tab's address."""
+        marks = ("raw data of artwork", "artwork url", "return URL of t")
+        return [next(m for m in marks if m in c[1]) for c in self.apple_events() if any(m in c[1] for m in marks)]
+
+    def image(self, **popover):
+        row = self.row(self.popover(**popover))
+        return base64.b64decode(row["image"]).decode() if "image" in row else None
 
     def row(self, blocks):
         """The track's row, in the section's list."""
@@ -286,6 +314,54 @@ class NowPlayingTests(ExtensionTestCase):
         self.scene(now=youtube(), tab="gone")
         self.assertEqual(self.run_ext("show").of_type("hud")[0]["text"], "Google Chrome is no longer open")
         self.assertEqual(self.box.shim_calls(), [], "never starts a player")
+
+    def test_musics_artwork_is_asked_of_music_once_a_track(self):
+        self.fake_art_tools()
+        self.scene(now=playing(), musicArt="MUSICPNG")
+        self.assertEqual(self.image(), "MUSICPNG")
+        self.assertEqual(self.image(), "MUSICPNG")
+        self.assertEqual(self.art_asks(), ["raw data of artwork"], "kept for the track")
+        self.bar()
+        self.assertEqual(self.art_asks(), ["raw data of artwork"], "the bar never asks: only the popover shows it")
+
+    def test_spotifys_cover_comes_from_its_url(self):
+        self.fake_art_tools()
+        self.scene(now=playing(app="Spotify", bundle="com.spotify.client"), spotifyArt="https://i.scdn.co/image/ab67616d")
+        self.assertEqual(self.image(), "https://i.scdn.co/image/ab67616d")
+        self.scene(now=playing(title="Elsewhere", app="Spotify", bundle="com.spotify.client"), spotifyArt="https://evil.example/x.jpg")
+        self.assertIsNone(self.image())
+        self.assertEqual([c for c in self.box.shim_calls() if c.startswith("curl")], ["curl https://i.scdn.co/image/ab67616d"],
+                         "only Spotify's image host is fetched")
+
+    def test_a_youtube_tab_shows_its_video_thumbnail_without_moving_the_tab(self):
+        self.fake_art_tools()
+        self.scene(now=youtube(), tabURL="https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s")
+        self.assertEqual(self.image(), "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg")
+        [ask] = [c for c in self.apple_events() if "return URL of t" in c[1]]
+        self.assertNotIn("active tab index", ask[1], "reading the address selects nothing")
+        self.assertEqual(ask[2], "Lokko - Min fejn jien ( official music video )")
+
+    def test_youtube_addresses(self):
+        spec = importlib.util.spec_from_file_location("now_playing", EXTENSIONS / "now-playing" / "main.py")
+        np = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(np)
+        for url in ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=x",
+                    "https://youtu.be/dQw4w9WgXcQ", "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+                    "https://www.youtube.com/watch?feature=share&v=dQw4w9WgXcQ"):
+            self.assertEqual(np.YOUTUBE.match(url).group(1), "dQw4w9WgXcQ", url)
+        for url in ("https://www.youtube.com/", "https://vimeo.com/123", "http://www.youtube.com/watch?v=dQw4w9WgXcQ"):
+            self.assertIsNone(np.YOUTUBE.match(url), url)
+
+    def test_a_source_with_no_artwork_is_asked_once(self):
+        self.fake_art_tools()
+        self.scene(now=youtube(), tabURL="https://example.com/radio")
+        self.assertIsNone(self.image())
+        self.assertIsNone(self.image())
+        self.assertEqual(self.art_asks(), ["return URL of t"])
+        self.scene(now=playing(), denyArt=True)
+        self.assertIsNone(self.image())
+        self.assertIsNone(self.image())
+        self.assertEqual(self.art_asks(), ["return URL of t", "raw data of artwork"], "denied: not asked again for that track")
 
     def test_now_playing_view_with_nothing_played_says_so(self):
         self.assertIn("Nothing is playing", self.run_ext("now").detail["markdown"])

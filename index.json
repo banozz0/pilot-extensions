@@ -391,8 +391,8 @@
       "id": "now-playing",
       "title": "Now playing",
       "icon": "🎵",
-      "version": "1.2.0",
-      "description": "Whatever your Mac is playing, in the menu bar, as Control Center's Now Playing sees it: Music, Spotify, a YouTube tab in Chrome, Safari or Zen, any app. Click it for the track with its artwork and artist, how far in, play or pause, previous and next; Favourite while Music plays. Click the track to go to the tab or app playing it. Never starts a player; going to a browser tab asks once to control that browser, Favourite once to control Music.",
+      "version": "1.2.1",
+      "description": "Whatever your Mac is playing, in the menu bar, as Control Center's Now Playing sees it: Music, Spotify, a YouTube tab in Chrome, Safari or Zen, any app. Click it for the track with its artwork and artist, how far in, play or pause, previous and next; Favourite while Music plays. Click the track to go to the tab or app playing it. The artwork comes from Music, Spotify's cover or a YouTube tab's thumbnail. Never starts a player; macOS asks once to let Pilot control the browser (for its tab and a video's thumbnail), Spotify (its cover) and Music (its artwork and Favourite).",
       "examples": [
         "A YouTube video plays in Chrome: the menu bar shows ♫ and its title; a lone ♫ while paused, nothing when nothing has played",
         "Click it, then the track: Chrome comes forward on the YouTube tab that plays it"
@@ -401,7 +401,8 @@
         "python3",
         "osascript",
         "sips",
-        "open"
+        "open",
+        "curl"
       ],
       "commands": [
         {
@@ -436,7 +437,10 @@
         }
       ],
       "permissions": {
-        "network": [],
+        "network": [
+          "i.ytimg.com",
+          "i.scdn.co"
+        ],
         "clipboard": false,
         "files": [],
         "actions": []
@@ -444,14 +448,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "47185746f3f6a97c4aefdce7730e4aa85c17c40bf74cc2c0d88db5db6d31e234",
-          "size": 2090,
+          "sha256": "0fb5d4d844a54cc9d61bcbdc1e422ce404dfc0c483853cf4a8d8380c8f725796",
+          "size": 2271,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "2fcb551d45cc0041034311199ec174bca0c58bada193e6c90bc58610e7503924",
-          "size": 21545,
+          "sha256": "383471498fc01eec13aa813f90e03365e2730ae6b1c983efc4458632ee33ecf9",
+          "size": 26011,
           "executable": true
         }
       ]
