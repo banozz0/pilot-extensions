@@ -676,10 +676,10 @@
       "id": "todo",
       "title": "To-do",
       "icon": "☑️",
-      "version": "1.1.1",
-      "description": "A plain to-do list in the menu bar: add one, tick it off, delete it. Kept on this Mac only, no account and no sync.",
+      "version": "2.0.0",
+      "description": "A to-do list in Hyper+Space and the menu bar: type to add or filter, Return ticks one off, every other action on a key. Due days are optional: with none set it is one tidy list. Kept on this Mac only, no account and no sync.",
       "examples": [
-        "The menu bar shows ☑️ 3: click it, type buy milk in Add a to-do and press Return; tick ⬜ when it is done",
+        "Hyper+Space › To-do, type call mum fri and press Return: added, due Friday, under Upcoming; Return on a to-do ticks it off, ⌘Z puts it back",
         "Type todo buy milk in Hyper+Space and press Return: Add a to-do: buy milk adds it in one step"
       ],
       "requires": [
@@ -701,14 +701,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "d37ac26b4032142e48d36131e70ceeb94060dba6ad39064ef0ba0a495984438e",
-          "size": 1706,
+          "sha256": "1439b8bc7f2950c88fd22ed057b2730e476d2cba39f8dc1bf5939ec5845e6996",
+          "size": 2292,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "9d028b9915873a4fba342d2911158202335bb4ba4e544f70dba5c722dd29c4fa",
-          "size": 11550,
+          "sha256": "aa0b7374f115d43140304013cead59b7734cd588295213b847c1e8097a0ebbe6",
+          "size": 25148,
           "executable": true
         }
       ]

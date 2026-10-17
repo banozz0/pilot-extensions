@@ -14,6 +14,7 @@ import functools
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -32,7 +33,10 @@ ITEM_ACTIONS = {"open": "url", "copy": "text", "paste": "text", "push": "command
 ACTIONS = dict(ITEM_ACTIONS, timer="seconds", alert="text")
 # Pilot's Extension.Item.Action.icons: one list for an inline button, a note and a link (chart, plus, reset, info: Q138).
 INLINE_ICONS = {"bubble", "moon", "sun", "pencil", "tag", "xmark", "arrow.up", "arrow.down", "terminal", "refresh", "chart",
-                "plus", "reset", "info"}
+                "plus", "reset", "info", "circle", "checkmark.circle"}  # circle, checkmark.circle: To-do B, 2026-10-17
+# An action's key (To-do B, ADR 0010 amended 2026-10-17): modifiers then one key; Pilot's Extension.Item.Action.Key.
+KEY = re.compile(r"^((cmd|ctrl|opt|shift)\+)+([a-z0-9]|return|delete|up|down)$")
+OWNED_KEYS = {"cmd+" + k for k in "acvxkqwhm123456789"}
 
 _spec = importlib.util.spec_from_file_location("check", ROOT / "scripts" / "check.py")
 check = importlib.util.module_from_spec(_spec)
@@ -191,9 +195,13 @@ class ExtensionTestCase(unittest.TestCase):
         """Every item as Pilot decodes it: a title string, optional strings, actions of known types with their field."""
         for item in items:
             self.assertIsInstance(item.get("title"), str)
-            for key in ("id", "subtitle", "icon", "keywords"):
+            for key in ("id", "subtitle", "icon", "keywords", "section"):
                 if key in item:
                     self.assertIsInstance(item[key], str, key)
+            if "accessory" in item:  # To-do B: a word, or a badge's text and tone, at the row's right
+                accessory = item["accessory"]
+                self.assertIsInstance(accessory if isinstance(accessory, str) else accessory.get("text"), str)
+                self.assertIn(None if isinstance(accessory, str) else accessory.get("tone"), self.TONES)
             for action in item.get("actions", []):
                 self.assertActionShape(action, ITEM_ACTIONS)
             self.assertLessEqual(len(item.get("badges", [])), 3)  # story 165: badges and inline buttons, 3 each
@@ -210,6 +218,14 @@ class ExtensionTestCase(unittest.TestCase):
     def assertActionShape(self, action, fields=ACTIONS):
         self.assertIn(action.get("type"), fields, action)
         self.assertIn(fields[action["type"]], action, action)
+        if "key" in action:  # To-do B: Command, Control or Option, never a key the search field or Pilot owns
+            self.assertRegex(action["key"], KEY)
+            self.assertTrue(any(m in action["key"] for m in ("cmd", "ctrl", "opt")), action)
+            self.assertNotIn(action["key"], OWNED_KEYS)
+        for flag in ("stay", "clear"):  # To-do B: Hyper+Space stays open as a run runs
+            if flag in action:
+                self.assertIs(action[flag], True)
+                self.assertEqual(action["type"], "run", action)
         if "ask" in action:  # story 165: only a run asks; text, up to 8 choices, or a confirm
             self.assertEqual(action["type"], "run", action)
             ask = action["ask"]
@@ -228,8 +244,7 @@ class ExtensionTestCase(unittest.TestCase):
             self.assertIn(names[action["command"]]["mode"], wanted, action)
 
     BLOCK_TYPES = {"stats", "meter", "list", "markdown", "buttons", "section", "chat", "input", "hero", "strip", "note", "links"}
-    ICONS = {"bubble", "moon", "sun", "pencil", "tag", "xmark", "arrow.up", "arrow.down", "terminal", "refresh", "chart", "plus",
-             "reset", "info"}  # Pilot's Extension.Item.Action.icons
+    ICONS = INLINE_ICONS  # Pilot's Extension.Item.Action.icons
     ROLES = ("user", "assistant", "tool")
     TONES = (None, "fine", "warn", "alert")
 

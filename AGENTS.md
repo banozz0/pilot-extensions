@@ -33,6 +33,9 @@ Q138 (ADR 0010 amended 2026-10-16): `help` on a meter or section (hover words), 
 2026-10-17 (ADR 0010 amended): a page's `list` may carry `"reorder": {"command": "<no-view>"}`: rows with an `id` drag (and move with ⌥↑ ⌥↓),
 each move runs that command with context `{key, to}` (`to` the place after the move, from 0); an `input` may carry `"live": true` and
 `debounce` (ms, 50-2000, default 250): it runs as Sven types, blank text too, its HUD hidden. An older Pilot ignores both, so keep the old way in.
+To-do B (ADR 0010 amended 2026-10-17): a list item may carry `section` (Hyper+Space heads it) and `accessory` (a word or `{text, tone}` at its
+right); an action `key` (`cmd+e`, `opt+up`, `cmd+delete`; never ⌘A ⌘C ⌘V ⌘X ⌘K ⌘Q ⌘W ⌘H ⌘M ⌘1-9) runs it on the selected row in Hyper+Space; a
+`run` with `stay` (or `clear`, which empties the search) keeps Hyper+Space open and asks the list again; an `ask` there is asked in the panel.
 
 ## Adding or changing an extension
 1. Make `extensions/<id>/` with `extension.json` (`id`, `title`, emoji `icon`, `version` x.y.z, `description`, `requires`, `permissions`,
