@@ -10,6 +10,16 @@ Pilot itself lives in `~/code/pilot`; never edit it from here.
 - After a change Pilot should offer: `python3 scripts/build-index.py`.
 
 ## Layout
+```
+pilot-extensions/
+├── extensions/   # one self-contained folder per extension; the folder name is the id
+│   ├── ai-usage/  claude-sessions/  dev-utils/  easy-cd/  ghostex/
+│   ├── git/  github/  markets/  now-playing/  obsidian-search/
+│   └── pomodoro/  ports/  ssh-hosts/  todo/  weather/
+├── scripts/      # build-index.py (writes index.json), check.py
+└── tests/        # stdlib unittest; harness.py runs a command as Pilot does
+```
+
 - `extensions/<id>/extension.json` + its programs. The folder name is the id. Each folder is self-contained: no shared code outside it,
   since Pilot installs one folder at a time.
 - `scripts/build-index.py` writes `index.json` (sha256, size and executable bit per file, hidden commands left out).
