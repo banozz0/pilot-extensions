@@ -32,7 +32,7 @@ class CatalogueInstallTests(unittest.TestCase):
 
     def test_index_lists_every_extension_folder(self):
         self.assertEqual(self.index["schema"], 1)
-        self.assertEqual([e["id"] for e in self.index["extensions"]], [f.name for f in check.build_index.folders()])
+        self.assertEqual([e["id"] for e in self.index["extensions"]], [f.name for f in check.build_index.folders() if check.build_index.listed(f)])
 
     def test_every_entry_installs_into_a_folder_pilot_reads(self):
         for entry in self.index["extensions"]:

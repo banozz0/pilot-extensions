@@ -15,7 +15,8 @@ pilot-extensions/
 ├── extensions/   # one self-contained folder per extension; the folder name is the id
 │   ├── ai-usage/  claude-sessions/  dev-utils/  easy-cd/  ghostex/
 │   ├── git/  github/  markets/  now-playing/  obsidian-search/
-│   └── pomodoro/  ports/  ssh-hosts/  todo/  weather/
+│   ├── pomodoro/  ports/  ssh-hosts/  todo/  weather/
+│   └── video-downloader/   # unlisted: Sven's Mac only, never in index.json
 ├── scripts/      # build-index.py (writes index.json), check.py
 └── tests/        # stdlib unittest; harness.py runs a command as Pilot does
 ```
@@ -37,6 +38,8 @@ lists it, and keep the old way in for fields an older Pilot ignores. Read the AD
    Print only protocol lines on stdout. Never log item titles, clipboard text or secrets.
 3. Write `tests/test_<id>.py` on the harness; shim `open`, `pbcopy`, `pbpaste`, `gh` so nothing touches the screen.
 4. Bump `version` on every change Pilot should offer as an update, then rebuild the index.
+5. `"unlisted": true` in the manifest keeps an extension out of `index.json` (Sven's Mac only; Pilot ignores the key):
+   it is installed from its folder with `pilot ext install`.
 
 Never install into `~/Library/Application Support/Pilot/` (Sven's live Pilot reads it); try an install in a temp folder.
 Licence: ideas only, never code, from Raycast, Vicinae, ClipBook or Alfred extensions.

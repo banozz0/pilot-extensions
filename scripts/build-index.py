@@ -67,8 +67,17 @@ def folders():
     return sorted(p for p in EXTENSIONS.iterdir() if p.is_dir() and not p.name.startswith("."))
 
 
+def listed(folder):
+    """Whether the catalogue offers `folder`: one whose manifest says `"unlisted": true` stays on Sven's Mac only, never in
+    index.json (Video downloader, Q470). Pilot ignores the key; it is installed from its folder."""
+    try:
+        return json.loads((folder / "extension.json").read_text(encoding="utf-8")).get("unlisted") is not True
+    except (OSError, ValueError, AttributeError):
+        return True
+
+
 def build():
-    return {"schema": SCHEMA, "extensions": [entry(f) for f in folders()]}
+    return {"schema": SCHEMA, "extensions": [entry(f) for f in folders() if listed(f)]}
 
 
 def render(index):

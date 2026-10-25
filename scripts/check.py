@@ -204,6 +204,8 @@ def check(folder):
             isinstance(permissions.get(k, []), list) for k in ("network", "files", "actions")) \
             or not isinstance(permissions.get("clipboard", False), bool):
         problems.append("permissions must hold lists network, files, actions and a boolean clipboard")
+    if not isinstance(manifest.get("unlisted", False), bool):
+        problems.append("unlisted must be a boolean")
     check_commands(folder, manifest, problems)
     check_preferences(manifest, problems)
     check_surfaces(manifest, problems)

@@ -1,0 +1,22 @@
+{
+  "id": "video-downloader",
+  "title": "Video downloader",
+  "icon": "📥",
+  "version": "1.0.0",
+  "description": "Saves a YouTube, X or Twitch video or its audio to Downloads, through yt-dlp and ffmpeg from Homebrew.",
+  "examples": ["Copy a YouTube link, open Video downloader, Return: the video saves to ~/Downloads", "Pick Audio · MP3 to save only the sound"],
+  "unlisted": true,
+  "runtime": "process",
+  "surfaces": { "page": { "command": "page", "every": 60 } },
+  "requires": ["python3", "yt-dlp", "ffmpeg"],
+  "permissions": { "clipboard": true, "network": ["youtube.com", "x.com", "twitch.tv"], "files": ["~/Downloads"] },
+  "commands": [
+    { "name": "formats", "title": "Video downloader", "mode": "list", "filter": "self", "run": "main.py" },
+    { "name": "download", "title": "Download", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "cancel", "title": "Cancel download", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "refresh", "title": "Refresh", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "reveal", "title": "Reveal in Finder", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "copy-file", "title": "Copy file", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "page", "title": "Video downloader page", "mode": "no-view", "hidden": true, "run": "main.py" }
+  ]
+}
