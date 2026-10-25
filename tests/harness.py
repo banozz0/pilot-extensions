@@ -27,10 +27,11 @@ ROOT = Path(__file__).resolve().parent.parent
 EXTENSIONS = ROOT / "extensions"
 SYSTEM_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 TIMEOUTS = {"list": 2.0, "detail": 2.0, "no-view": 30.0, "page": 5.0, "bar": 2.0, "popover": 5.0}  # stories 161, 165
-# Each action type and the field it needs; an item carries the first seven, a no-view run may also print the last two.
+# Each action type and the field it needs; an item carries the first seven, a no-view run may also print the last three
+# (ai: ADR 0010 amended 2026-10-25, Pilot's AI on a text, its answer handed to a run).
 ITEM_ACTIONS = {"open": "url", "copy": "text", "paste": "text", "push": "command", "run": "command", "hud": "text",
                 "pilot": "action"}
-ACTIONS = dict(ITEM_ACTIONS, timer="seconds", alert="text")
+ACTIONS = dict(ITEM_ACTIONS, timer="seconds", alert="text", ai="prompt")
 # Pilot's Extension.Item.Action.icons: one list for an inline button, a note and a link (chart, plus, reset, info: Q138).
 INLINE_ICONS = {"bubble", "moon", "sun", "pencil", "tag", "xmark", "arrow.up", "arrow.down", "terminal", "refresh", "chart",
                 "plus", "reset", "info", "circle", "checkmark.circle"}  # circle, checkmark.circle: To-do B, 2026-10-17

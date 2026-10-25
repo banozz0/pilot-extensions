@@ -1,0 +1,22 @@
+{
+  "id": "summarise",
+  "title": "Summarise",
+  "icon": "📝",
+  "version": "1.0.0",
+  "description": "Summarises a YouTube video, a web page or a document with Pilot's AI, with its full text beside it. Save it as Markdown to Downloads, or ask about it.",
+  "examples": ["Copy a YouTube link, open Summarise, Return: its page shows the summary and the transcript", "Hyper+drag over a link and press Summarise in the pill"],
+  "runtime": "process",
+  "surfaces": { "page": { "command": "page", "every": 600 } },
+  "requires": ["python3"],
+  "permissions": { "clipboard": true, "network": ["youtube.com", "any page you summarise"], "files": ["~/Downloads", "the documents you summarise"] },
+  "commands": [
+    { "name": "summarise", "title": "Summarise", "mode": "list", "filter": "self", "run": "main.py" },
+    { "name": "fetch", "title": "Summarise", "mode": "no-view", "hidden": true, "keyword": "summarise", "run": "main.py" },
+    { "name": "summarised", "title": "Summary", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "ask", "title": "Ask about it", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "answered", "title": "Answer", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "save", "title": "Save as .md", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "show", "title": "Show a summary", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "page", "title": "Summarise page", "mode": "no-view", "hidden": true, "run": "main.py" }
+  ]
+}

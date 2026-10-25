@@ -15,7 +15,7 @@ pilot-extensions/
 ├── extensions/   # one self-contained folder per extension; the folder name is the id
 │   ├── ai-usage/  claude-sessions/  dev-utils/  easy-cd/  ghostex/
 │   ├── git/  github/  markets/  now-playing/  obsidian-search/
-│   ├── pomodoro/  ports/  ssh-hosts/  todo/  weather/
+│   ├── pomodoro/  ports/  ssh-hosts/  summarise/  todo/  weather/
 │   └── video-downloader/   # unlisted: Sven's Mac only, never in index.json
 ├── scripts/      # build-index.py (writes index.json), check.py
 └── tests/        # stdlib unittest; harness.py runs a command as Pilot does

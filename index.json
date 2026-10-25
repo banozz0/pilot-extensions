@@ -673,6 +673,53 @@
       ]
     },
     {
+      "id": "summarise",
+      "title": "Summarise",
+      "icon": "📝",
+      "version": "1.0.0",
+      "description": "Summarises a YouTube video, a web page or a document with Pilot's AI, with its full text beside it. Save it as Markdown to Downloads, or ask about it.",
+      "examples": [
+        "Copy a YouTube link, open Summarise, Return: its page shows the summary and the transcript",
+        "Hyper+drag over a link and press Summarise in the pill"
+      ],
+      "requires": [
+        "python3"
+      ],
+      "commands": [
+        {
+          "name": "summarise",
+          "title": "Summarise",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [
+          "youtube.com",
+          "any page you summarise"
+        ],
+        "clipboard": true,
+        "files": [
+          "~/Downloads",
+          "the documents you summarise"
+        ],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "b3b104123a4a4cf80a4980e0dcaecbee24f5904b0396e5b339db40edba1c5860",
+          "size": 1552,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "78311a85a682658a58d5c9b7937ce5afa4f07c07f3e98fd0a9e91d994ce57a31",
+          "size": 30584,
+          "executable": true
+        }
+      ]
+    },
+    {
       "id": "todo",
       "title": "To-do",
       "icon": "☑️",
