@@ -9,6 +9,9 @@ the source, opens the page and asks Pilot's AI through an `ai` action (ADR 0010,
 back as `summarised`'s input; `ask` and `answered` do the same for a question. The AI runs only as Sven runs one of
 those (Q478): the list and the page read the disk and never ask it, and the page asks again every 2 s only while an
 answer is on its way. Each source is one JSON file in paths.data/items; paths.data/current names the one the page shows.
+`bar` is the menu-bar item (Q485): 📝, with … while a summary is on its way, from the disk alone; its popover, asked on a
+click, offers what is copied (a link, a Finder file or text) as one row whose click summarises it, a box to paste a link
+or text into, and the last summary. Only the popover reads the clipboard, and the AI still runs only on a click.
 Python 3.9 stdlib only, as macOS's /usr/bin/python3; a PDF's text comes from PDFKit through osascript's JavaScript and a
 rich document's through textutil, both on every Mac, neither a target that asks for permission.
 """
@@ -413,8 +416,8 @@ def said(process, timeout):
     return out.strip() if process.returncode == 0 else None
 
 
-def clipboard_link(process=None):
-    text = said(process or started(["pbpaste"]), 0.5)
+def clipboard_link():
+    text = said(started(["pbpaste"]), 0.5)
     return text if text and is_link(text) else None
 
 
@@ -422,6 +425,12 @@ def clipboard_file(process):
     """A file copied in Finder (⌘C), from the clipboard's file URL: no Finder automation, so no permission asked."""
     path = said(process, 0.8)
     return path if path and os.path.isfile(path) else None
+
+
+def copied_now():
+    """The clipboard's text and its Finder file, both asked at once: each is a process start, and a list has 2 s."""
+    reading = started(["pbpaste"]), started(["osascript", "-e", "POSIX path of (the clipboard as «class furl»)"])
+    return said(reading[0], 0.5), clipboard_file(reading[1])
 
 
 def documents(words, limit=8):
@@ -459,9 +468,8 @@ def summarise(run, store):
     if kind in ("video", "page", "doc"):
         rows.append(start_row(query, "Summarise %s" % short(query), noun(kind).capitalize(), "📝", "typed"))
     elif not query:
-        # Both asked at once: each is a process start, and the list has 2 s.
-        reading = started(["pbpaste"]), started(["osascript", "-e", "POSIX path of (the clipboard as «class furl»)"])
-        link, copied = clipboard_link(reading[0]), clipboard_file(reading[1])
+        text, copied = copied_now()
+        link = text if text and is_link(text) else None
         if link:
             rows.append(start_row(link, "Summarise the copied link", short(link), "🔗", "clipboard"))
         if copied:
@@ -504,7 +512,11 @@ def source_text(item):
 def fetch(run, store):
     """Reads the source (the input, else the row's, else the copied link), opens the page on it, then asks for its summary;
     a source already summarised only opens."""
-    source = (run.get("input") or (run.get("context") or {}).get("source") or "").strip() or clipboard_link()
+    context = run.get("context") or {}
+    source = (run.get("input") or context.get("source") or "").strip()
+    if not source and context.get("clipboard"):  # the popover's copied text, read as it is pressed
+        source = said(started(["pbpaste"]), 0.5) or ""
+    source = source or clipboard_link()
     if not source:
         return send({"type": "hud", "text": "Copy a link first, or type summarise and a link"})
     kind = kind_of(source)
@@ -607,6 +619,60 @@ def show(run, store):
     open_item(store, item)
 
 
+def status_of(item):
+    """Its status; a read stopped with its run, or an answer that never came back, counts as failed after STALE, so the
+    2 s asks stop."""
+    status = item.get("status")
+    stale = time.time() - item.get("at", 0) > STALE
+    if status in ("reading", "summarising") and stale:
+        status, item["error"] = "failed", "it took too long"
+    if item.get("asking") and stale:
+        item["asking"] = False
+    return status
+
+
+def summary_words(item, status):
+    name = noun(item.get("kind"))
+    if status == "reading":
+        return "_Reading the %s…_" % ("transcript" if name == "video" else name)
+    if status == "summarising":
+        return "_Pilot's AI is summarising it…_"
+    if status == "failed":
+        return "Not summarised: %s" % item.get("error", "")
+    return item.get("summary") or ""
+
+
+def bar(run, store):
+    """The bar line, 📝 (… while a summary is on its way), from the disk; on a click, its popover: what is copied as a row
+    that summarises it, a box to paste a link or text into, and the last summary (Pilot draws Open page under it)."""
+    item = store.current()
+    status = status_of(item) if item else None
+    working = status in ("reading", "summarising")
+    if run.get("surface") != "popover":
+        return send({"type": "bar", "text": "📝 …" if working else "📝", "blocks": [{"type": "markdown", "text":
+                     "Click to summarise what you copied: a link, a file or text."}]})
+    copied, path = copied_now()
+    rows = []
+    if path:
+        rows.append(start_row(path, "Summarise %s" % os.path.basename(path), "Copied in Finder", "📄", "finder"))
+    elif copied and is_link(copied):
+        rows.append(start_row(copied, "Summarise the copied %s" % noun(kind_of(copied)), short(copied), "🔗", "clipboard"))
+    elif copied:
+        first = copied.split("\n")[0].strip()
+        rows.append({"id": "text", "title": "Summarise the copied text", "subtitle": first[:60] + ("…" if len(first) > 60 else ""),
+                     "icon": "📋", "actions": [run_action("fetch", "Summarise", {"clipboard": True})]})
+    blocks = [{"type": "list", "title": "Copied", "items": rows}] if rows else [
+        {"type": "markdown", "text": "Copy a link, a file in Finder or some text, or paste one below."}]
+    blocks.append({"type": "input", "placeholder": "Paste a link or text to summarise", "action": run_action("fetch", "Summarise")})
+    if item:
+        blocks.append({"type": "section", "title": item.get("title") or "Summary", "subtitle": short(item.get("source", "")),
+                       "blocks": [{"type": "markdown", "text": summary_words(item, status)}]})
+    answer = {"type": "blocks", "blocks": blocks}
+    if working:
+        answer["refresh"] = 2
+    send(answer)
+
+
 def page(run, store):
     """The page: the source shown, its summary, Ask about it, the full text, and the earlier ones; disk only, asked again
     every 2 s while an answer is on its way."""
@@ -615,13 +681,7 @@ def page(run, store):
         return send({"type": "blocks", "blocks": [{"type": "markdown", "text":
                     "Copy a YouTube link, a web page's link or a document in Finder, then open **Summarise** in Hyper+Space. "
                     "Hyper+drag over a link shows Summarise in the selection pill too."}]})
-    name, status = noun(item.get("kind")), item.get("status")
-    # A read stopped with its run, or an answer that never came back, stops the 2 s asks after STALE.
-    stale = time.time() - item.get("at", 0) > STALE
-    if status in ("reading", "summarising") and stale:
-        status, item["error"] = "failed", "it took too long"
-    if item.get("asking") and stale:
-        item["asking"] = False
+    name, status = noun(item.get("kind")), status_of(item)
     facts = [{"label": label, "value": str(item[key])} for label, key in (("Channel", "channel"), ("Length", "length"))
              if item.get(key)]
     if item.get("words"):
@@ -638,15 +698,8 @@ def page(run, store):
         buttons.append(run_action("fetch", "Try again", {"source": item["source"]}))
     if buttons:
         blocks.append({"type": "buttons", "actions": buttons})
-    if status == "reading":
-        summary = "_Reading the %s…_" % ("transcript" if name == "video" else name)
-    elif status == "summarising":
-        summary = "_Pilot's AI is summarising it…_"
-    elif status == "failed":
-        summary = "Not summarised: %s" % item.get("error", "")
-    else:
-        summary = item.get("summary") or ""
-    blocks.append({"type": "section", "title": "Summary · Pilot AI", "blocks": [{"type": "markdown", "text": summary}]})
+    blocks.append({"type": "section", "title": "Summary · Pilot AI",
+                   "blocks": [{"type": "markdown", "text": summary_words(item, status)}]})
     if item.get("text"):
         chat = item.get("chat") or []
         asked = [{"type": "chat", "messages": chat, "working": bool(item.get("asking"))}] if chat else []
@@ -669,7 +722,7 @@ def page(run, store):
 
 
 COMMANDS = {"summarise": summarise, "fetch": fetch, "summarised": summarised, "ask": ask, "answered": answered,
-            "save": save, "show": show, "page": page}
+            "save": save, "show": show, "page": page, "bar": bar}
 
 
 def main():

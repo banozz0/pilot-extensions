@@ -9,6 +9,9 @@ The list draws whichever is there when it is asked; the page asks again every 2 
 download says so in a HUD through pilot://alert. yt-dlp works only in paths.cache/part, emptied first, and the finished
 file is moved to ~/Downloads under a name no file there has: yt-dlp reuses a same-named file where it saves and its audio
 step deletes what it converted, so it never sees ~/Downloads. Cancel deletes only the part folder. paths.data/last.json keeps the format picked last, listed first (Q476).
+The bar item (Q484) is 📥 while idle and 📥 and the percent while a download runs, asked every 60 s (Pilot's floor) and
+at once after Download or Cancel; its popover follows the download every 2 s, and when idle offers the copied link's
+formats and a box to paste a link into, Return saving it in the last format used. Only the popover reads the clipboard.
 Python 3.9 stdlib only, as macOS's /usr/bin/python3.
 """
 import hashlib
@@ -513,9 +516,11 @@ def formats(run, paths):
 
 def start(run, paths):
     context = run.get("context") or {}
-    url, chosen = context.get("url"), context.get("format")
+    url = context.get("url") or (run.get("input") or "").strip()  # the popover's box: a pasted link
+    chosen = context.get("format") or read_json(paths.last).get("format") or "best"
     if not site(url or "") or chosen not in FORMAT:
-        return send({"type": "error", "text": "has no link or format to download"})
+        return send({"type": "error", "text": "needs a YouTube, X or Twitch link" if not site(url or "")
+                     else "has no format %s" % chosen})
     if not tool("yt-dlp"):
         return send({"type": "error", "text": "needs yt-dlp: open Video downloader to install it"})
     job = read_json(paths.job)
@@ -562,33 +567,87 @@ def copy_file(run):
     send({"type": "hud", "text": "Copied %s" % os.path.basename(path)})
 
 
+def running_blocks(run, job):
+    """A download's progress and Cancel, for the page and the bar's popover."""
+    drawn = set((((run.get("pilot") or {}).get("blocks")) or "").split(","))
+    name = "%s · %s" % (job.get("title") or short(job["url"]), job.get("format_title", ""))
+    items = [{"label": "Done", "value": megabytes(job.get("done")) or "–"},
+             {"label": "Speed", "value": rate(job["speed"]) if job.get("speed") else "–"},
+             {"label": "Left", "value": clock(job["eta"]) if job.get("eta") is not None else "–"}]
+    if "hero" in drawn:
+        reading = {"type": "hero", "value": job.get("percent", 0), "unit": "%", "place": job.get("step") or name,
+                   "items": items}
+    else:
+        reading = {"type": "meter", "label": job.get("step") or "Downloading", "percent": job.get("percent", 0),
+                   "note": name}
+    return [reading, {"type": "buttons", "actions": [run_action("cancel", "Cancel", destructive=True)]}]
+
+
+def saved_block(job):
+    row = {"id": "saved", "title": os.path.basename(job["path"]), "icon": "🎬",
+           "subtitle": "%s · ~/Downloads · %s" % (megabytes(job.get("size")) or "", clock(job.get("took"))),
+           "actions": saved_actions(job["path"], "reveal")}
+    return {"type": "list", "title": "Saved", "items": [row]}
+
+
 def page(run, paths):
     """The page: a download's progress, asked every 2 s while it runs; the last saved file; else how to start one."""
-    drawn = set((((run.get("pilot") or {}).get("blocks")) or "").split(","))
     job = read_json(paths.job)
     if alive(job):
-        name = "%s · %s" % (job.get("title") or short(job["url"]), job.get("format_title", ""))
-        items = [{"label": "Done", "value": megabytes(job.get("done")) or "–"},
-                 {"label": "Speed", "value": rate(job["speed"]) if job.get("speed") else "–"},
-                 {"label": "Left", "value": clock(job["eta"]) if job.get("eta") is not None else "–"}]
-        if "hero" in drawn:
-            reading = {"type": "hero", "value": job.get("percent", 0), "unit": "%", "place": job.get("step") or name,
-                       "items": items}
-        else:
-            reading = {"type": "meter", "label": job.get("step") or "Downloading", "percent": job.get("percent", 0),
-                       "note": name}
-        cancel_button = run_action("cancel", "Cancel", destructive=True)
-        return send({"type": "blocks", "refresh": 2,
-                     "blocks": [reading, {"type": "buttons", "actions": [cancel_button]}]})
+        return send({"type": "blocks", "refresh": 2, "blocks": running_blocks(run, job)})
     if job.get("status") == "saved" and job.get("path"):
-        row = {"id": "saved", "title": os.path.basename(job["path"]), "icon": "🎬",
-               "subtitle": "%s · ~/Downloads · %s" % (megabytes(job.get("size")) or "", clock(job.get("took"))),
-               "actions": saved_actions(job["path"], "reveal")}
-        return send({"type": "blocks", "blocks": [{"type": "list", "title": "Saved", "items": [row]}]})
+        return send({"type": "blocks", "blocks": [saved_block(job)]})
     words = "Copy a YouTube, X or Twitch link, then open **Video downloader** in Hyper+Space and pick a format."
     if job.get("status") == "failed":
         words = "The last download failed: %s\n\n%s" % (job.get("error", ""), words)
     send({"type": "blocks", "blocks": [{"type": "markdown", "text": words}]})
+
+
+def paste_box(last):
+    """The popover's box: a pasted link, Return saving it in the last format used, Option+Return as the other kind."""
+    other = "mp3" if last in ("best", "720") else "best"
+    return {"type": "input", "placeholder": "Paste a link · ⏎ %s · ⌥⏎ %s" % (FORMAT[last]["title"], FORMAT[other]["title"]),
+            "action": run_action("download", "Download"), "alt": run_action("download", FORMAT[other]["title"],
+                                                                            {"format": other})}
+
+
+def bar(run, paths):
+    """The bar line (disk only: 📥, the percent while a download runs) and, on a click, its popover: the download's
+    progress every 2 s, else what is installed, the copied link's formats, the paste box and the last saved file."""
+    job = read_json(paths.job)
+    running = alive(job)
+    if run.get("surface") != "popover":
+        if running:
+            return send({"type": "bar", "text": "📥 %d%%" % job.get("percent", 0), "blocks": running_blocks(run, job)})
+        line = {"type": "bar", "text": "📥", "blocks": [{"type": "markdown", "text":
+                "Click to paste a link, or download the copied one."}]}
+        if job.get("status") == "failed":
+            line.update(tone="warn", blocks=[{"type": "markdown", "text": "Last download failed: %s" % job.get("error", "")}])
+        return send(line)
+    if running:
+        return send({"type": "blocks", "refresh": 2, "blocks": running_blocks(run, job)})
+    rows = install_rows()
+    if rows:
+        return send({"type": "blocks", "blocks": [{"type": "list", "title": "Video downloader needs", "items": rows}]})
+    last = read_json(paths.last).get("format")
+    last = last if last in FORMAT else "best"
+    blocks, waiting = [], False
+    url, _ = link({})
+    if url:
+        found = probe(paths, url)
+        waiting = found is None
+        rows = format_rows(url, "Copied", found, last)
+        blocks.append({"type": "list", "title": rows[0]["section"],
+                       "items": [dict((k, v) for k, v in r.items() if k != "section") for r in rows]})
+    blocks.append(paste_box(last))
+    if job.get("status") == "failed":
+        blocks.append({"type": "markdown", "text": "Last download failed: %s" % job.get("error", "")})
+    elif job.get("status") == "saved" and job.get("path"):
+        blocks.append(saved_block(job))
+    answer = {"type": "blocks", "blocks": blocks}
+    if waiting:
+        answer["refresh"] = 2  # the copied link's sizes are on their way
+    send(answer)
 
 
 def main():
@@ -613,6 +672,8 @@ def main():
         copy_file(run)
     elif command == "page":
         page(run, paths)
+    elif command == "bar":
+        bar(run, paths)
     else:
         send({"type": "error", "text": "has no command %s" % command})
 

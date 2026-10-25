@@ -2,12 +2,12 @@
   "id": "video-downloader",
   "title": "Video downloader",
   "icon": "📥",
-  "version": "1.0.0",
-  "description": "Saves a YouTube, X or Twitch video or its audio to Downloads, through yt-dlp and ffmpeg from Homebrew.",
-  "examples": ["Copy a YouTube link, open Video downloader, Return: the video saves to ~/Downloads", "Pick Audio · MP3 to save only the sound"],
+  "version": "1.1.0",
+  "description": "Saves a YouTube, X or Twitch video or its audio to Downloads, through yt-dlp and ffmpeg from Homebrew. Its menu-bar item shows a download's progress; click it to paste a link or save the copied one.",
+  "examples": ["Copy a YouTube link, open Video downloader, Return: the video saves to ~/Downloads", "Click 📥 in the menu bar, paste a link, Return: it saves in the format you used last"],
   "unlisted": true,
   "runtime": "process",
-  "surfaces": { "page": { "command": "page", "every": 60 } },
+  "surfaces": { "page": { "command": "page", "every": 60 }, "bar": { "command": "bar", "every": 60 } },
   "requires": ["python3", "yt-dlp", "ffmpeg"],
   "permissions": { "clipboard": true, "network": ["youtube.com", "x.com", "twitch.tv"], "files": ["~/Downloads"] },
   "commands": [
@@ -17,6 +17,7 @@
     { "name": "refresh", "title": "Refresh", "mode": "no-view", "hidden": true, "run": "main.py" },
     { "name": "reveal", "title": "Reveal in Finder", "mode": "no-view", "hidden": true, "run": "main.py" },
     { "name": "copy-file", "title": "Copy file", "mode": "no-view", "hidden": true, "run": "main.py" },
-    { "name": "page", "title": "Video downloader page", "mode": "no-view", "hidden": true, "run": "main.py" }
+    { "name": "page", "title": "Video downloader page", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "bar", "title": "Video downloader in the menu bar", "mode": "no-view", "hidden": true, "run": "main.py" }
   ]
 }
