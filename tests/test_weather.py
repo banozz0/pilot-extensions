@@ -81,6 +81,8 @@ class WeatherTests(ExtensionTestCase):
     PILOT = {"repos": "/tmp/code", "terminal": "com.mitchellh.ghostty",
              "blocks": "stats,meter,list,markdown,buttons,section,chat,input,hero,strip"}
     OLDER = {"repos": "/tmp/code", "terminal": "com.mitchellh.ghostty"}
+    # A Pilot that draws line icons by name (ADR 0010, amended 2026-10-25, Q475).
+    LINED = dict(PILOT, icons="bubble,cloud,cloud.bolt,cloud.drizzle,cloud.fog,cloud.moon,cloud.rain,cloud.snow,cloud.sun,moon,sun,wind")
 
     # ---- the bar and the cache ----
 
@@ -177,6 +179,19 @@ class WeatherTests(ExtensionTestCase):
                          [("Today", "☀️", "27°", "19°"), ("Sun", "🌧️", "22°", "17°"), ("Mon", "☁️", "21°", "16°"),
                           ("Tue", "☁️", "23°", "16°"), ("Wed", "⛈️", "24°", "18°")])
         self.assertIn("relative_humidity_2m", self.calls()[-1][1]["current"])
+
+    def test_a_pilot_that_draws_line_icons_gets_their_names_in_the_hero_and_strip_only(self):
+        hero, strip = self.popover(preferences=self.VALLETTA, pilot=self.LINED)
+        self.assertEqual(hero["glyph"], "sun")
+        self.assertEqual([c["glyph"] for c in strip["items"]], ["sun", "cloud.rain", "cloud", "cloud", "cloud.bolt"])
+        line = self.bar(preferences=self.VALLETTA, pilot=self.LINED)
+        self.assertEqual(line["text"], "☀️ 24°", "the bar's text keeps its emoji")
+        page = self.page(preferences=self.VALLETTA, pilot=self.LINED)
+        names = set(self.LINED["icons"].split(","))
+        self.assertFalse({row["icon"] for row in page[2]["blocks"][0]["items"]} & names, "list rows keep emoji")
+        # A Pilot listing only some names gets the emoji for the rest.
+        hero, strip = self.popover(preferences=self.VALLETTA, pilot=dict(self.PILOT, icons="sun,moon"))
+        self.assertEqual([c["glyph"] for c in strip["items"]], ["sun", "🌧️", "☁️", "☁️", "⛈️"])
 
     def test_the_bar_keeps_its_text_and_carries_the_glance(self):
         line = self.bar(preferences=self.VALLETTA, pilot=dict(self.PILOT, blocks="stats, hero, strip"))

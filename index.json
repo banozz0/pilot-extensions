@@ -717,7 +717,7 @@
       "id": "weather",
       "title": "Weather",
       "icon": "🌤️",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "description": "The temperature now in the menu bar; click it for feels like, high and low, rain chance, wind, the next hours and the next 7 days. Free data from Open-Meteo, no account or key.",
       "examples": [
         "The menu bar shows ☀️ 24°: click it for the next six hours and the week ahead",
@@ -746,14 +746,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "23a6b0ce34118d8085d0e502a9b82c00b0c9cc09d66a0c28d9f7bf5b3d9ab01b",
+          "sha256": "93ca6d579ca024d179fb99d5f5144e4056c7b85610ee063a6f492d4853ee6113",
           "size": 1701,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "d0034483802be3639991ee7193184f183d359e2a29b34681445a659301f3397d",
-          "size": 24646,
+          "sha256": "deb7d108462f130d29d7b610c53b98b0497dbe9d8a7032c692df2291fbdc5055",
+          "size": 26671,
           "executable": true
         }
       ]

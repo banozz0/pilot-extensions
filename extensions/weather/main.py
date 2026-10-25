@@ -48,6 +48,18 @@ CODES = {0: ("Clear", "☀️", "🌙"), 1: ("Mainly clear", "🌤️", "🌙"),
          77: ("Snow grains", "🌨️", "🌨️"), 80: ("Light showers", "🌦️", "🌧️"), 81: ("Showers", "🌧️", "🌧️"),
          82: ("Heavy showers", "🌧️", "🌧️"), 85: ("Snow showers", "🌨️", "🌨️"), 86: ("Snow showers", "🌨️", "🌨️"),
          95: ("Thunderstorm", "⛈️", "⛈️"), 96: ("Thunderstorm, hail", "⛈️", "⛈️"), 99: ("Thunderstorm, hail", "⛈️", "⛈️")}
+# The same codes as Pilot's line icons (ADR 0010, amended 2026-10-25, Q475): the day's name, the night's. A hero's and a
+# strip's glyph only, and only for a Pilot whose `pilot.icons` lists the name; any other gets the emoji.
+LINES = {0: ("sun", "moon"), 1: ("cloud.sun", "cloud.moon"), 2: ("cloud.sun", "cloud.moon"), 3: ("cloud", "cloud"),
+         45: ("cloud.fog", "cloud.fog"), 48: ("cloud.fog", "cloud.fog"),
+         51: ("cloud.drizzle", "cloud.drizzle"), 53: ("cloud.drizzle", "cloud.drizzle"), 55: ("cloud.drizzle", "cloud.drizzle"),
+         56: ("cloud.drizzle", "cloud.drizzle"), 57: ("cloud.drizzle", "cloud.drizzle"),
+         61: ("cloud.rain", "cloud.rain"), 63: ("cloud.rain", "cloud.rain"), 65: ("cloud.rain", "cloud.rain"),
+         66: ("cloud.rain", "cloud.rain"), 67: ("cloud.rain", "cloud.rain"), 80: ("cloud.rain", "cloud.rain"),
+         81: ("cloud.rain", "cloud.rain"), 82: ("cloud.rain", "cloud.rain"),
+         71: ("cloud.snow", "cloud.snow"), 73: ("cloud.snow", "cloud.snow"), 75: ("cloud.snow", "cloud.snow"),
+         77: ("cloud.snow", "cloud.snow"), 85: ("cloud.snow", "cloud.snow"), 86: ("cloud.snow", "cloud.snow"),
+         95: ("cloud.bolt", "cloud.bolt"), 96: ("cloud.bolt", "cloud.bolt"), 99: ("cloud.bolt", "cloud.bolt")}
 WINDS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -281,6 +293,12 @@ def condition(code, day=True):
     return words, sun if day else moon
 
 
+def glyph(code, day, icons):
+    """A hero's or a strip's glyph: the line icon's name where Pilot draws it (`icons`, from `pilot.icons`), else the emoji."""
+    name = LINES.get(code, (None, None))[0 if day else 1]
+    return name if name in icons else condition(code, day)[1]
+
+
 def wind(speed, direction, units):
     if not isinstance(speed, (int, float)):
         return "–"
@@ -364,10 +382,10 @@ class Weather:
             found.append((name, emoji, self.high_low(i), words, percent(at(self.daily, "precipitation_probability_max", i))))
         return found
 
-    def hero(self, error):
-        """The big now: the sky's emoji, the temperature, where and what, then feels like, wind and humidity."""
-        words, emoji = self.condition()
-        hero = {"type": "hero", "glyph": emoji, "value": degrees(self.now.get("temperature_2m")).rstrip("°"),
+    def hero(self, error, icons=()):
+        """The big now: the sky's line icon or emoji, the temperature, where and what, then feels like, wind and humidity."""
+        words = self.condition()[0]
+        hero = {"type": "hero", "glyph": glyph(self.now.get("weather_code"), self.now.get("is_day", 1) == 1, icons), "value": degrees(self.now.get("temperature_2m")).rstrip("°"),
                 "unit": "°F" if self.units == "fahrenheit" else "°C", "place": "%s · %s" % (self.place.get("name"), words),
                 "items": [{"label": "Feels like", "value": degrees(self.now.get("apparent_temperature"))},
                           {"label": "Wind", "value": wind(self.now.get("wind_speed_10m"), self.now.get("wind_direction_10m"),
@@ -377,11 +395,11 @@ class Weather:
             hero["tone"] = "warn"
         return hero
 
-    def strip(self, count):
-        """The next `count` days side by side, today first: each its emoji, high and low."""
-        return [{"label": name, "glyph": emoji, "high": degrees(at(self.daily, "temperature_2m_max", i)),
-                 "low": degrees(at(self.daily, "temperature_2m_min", i))}
-                for i, (name, emoji, _, _, _) in enumerate(self.days()[:count])]
+    def strip(self, count, icons=()):
+        """The next `count` days side by side, today first: each its line icon or emoji, high and low."""
+        return [{"label": name, "glyph": glyph(at(self.daily, "weather_code", i), True, icons),
+                 "high": degrees(at(self.daily, "temperature_2m_max", i)), "low": degrees(at(self.daily, "temperature_2m_min", i))}
+                for i, (name, _, _, _, _) in enumerate(self.days()[:count])]
 
     def summary(self):
         return "%s: %s, %s" % (self.place.get("name"), degrees(self.now.get("temperature_2m")), self.condition()[0].lower())
@@ -408,6 +426,12 @@ def draws_hero(run):
     pilot = run.get("pilot")
     listed = [k.strip() for k in str(pilot.get("blocks") or "").split(",")] if isinstance(pilot, dict) else []
     return "hero" in listed and "strip" in listed
+
+
+def drawn_icons(run):
+    """The icon names this Pilot draws: its run message's `pilot.icons`; an older Pilot names none, and gets emoji."""
+    pilot = run.get("pilot")
+    return {k.strip() for k in str(pilot.get("icons") or "").split(",")} if isinstance(pilot, dict) else set()
 
 
 def hour_list(upcoming):
@@ -445,8 +469,9 @@ def view_blocks(run, weather, error, view):
     on a page the next hours; else today's sections."""
     if not draws_hero(run):
         return blocks(weather, error, HOURS[view])
-    found = [weather.hero(error)]
-    strip = weather.strip(DAYS_SHOWN[view])
+    icons = drawn_icons(run)
+    found = [weather.hero(error, icons)]
+    strip = weather.strip(DAYS_SHOWN[view], icons)
     if strip:
         found.append({"type": "strip", "items": strip})
     if error:
