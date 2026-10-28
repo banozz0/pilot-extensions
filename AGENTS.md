@@ -11,16 +11,15 @@ Pilot itself lives in `~/code/pilot`; never edit it from here.
 
 ## Where things are
 
-README.md's file map shows every file with its own first line; `/Users/sven/code/agents/automation/bin/file-map .` rewrites it after you add, move or rename files.
+README.md's file map shows every file with its own first line; the `file-map` tool rewrites it after you add, move or rename files.
 
 - Each extension folder is self-contained, with no shared code outside it, since Pilot installs one folder at a time. `index.json`
   carries sha256, size and executable bit per file and leaves hidden commands out.
 
 ## Protocol
-Pilot's ADR 0010 is the contract, with every amendment: vault
-`/Users/sven/hermes-vault/obsidian-vault/Projects/Pilot/ADRs/0010-extensions-speak-json-lines-pilot-draws.md`. One JSON run message on
+Pilot's ADR 0010 (extensions speak JSON lines, Pilot draws) is the contract, with every amendment. One JSON run message on
 stdin, JSON lines on stdout, a fixed environment; list and detail answers within 2 s, no-view within 30 s, a surface or popover within
-5 s, a bar line within 2 s. Manifest rules mirror `~/code/pilot/Sources/PilotCore/Extension.swift`. Send a block kind only when `pilot.blocks`
+5 s, a bar line within 2 s. Manifest rules mirror Pilot's `Sources/PilotCore/Extension.swift` (github.com/banozz0/pilot). Send a block kind only when `pilot.blocks`
 lists it, and keep the old way in for fields an older Pilot ignores. Read the ADR before using a block, action or field.
 
 ## Adding or changing an extension
