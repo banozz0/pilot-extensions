@@ -9,17 +9,9 @@ Pilot itself lives in `~/code/pilot`; never edit it from here.
 - Once before landing: `python3 scripts/check.py && python3 -m unittest discover -s tests -v`, and again with `PILOT_EXT_PYTHON=/usr/bin/python3`.
 - After a change Pilot should offer: `python3 scripts/build-index.py`.
 
-## Layout
-```
-pilot-extensions/
-├── extensions/   # one self-contained folder per extension; the folder name is the id
-│   ├── ai-usage/  claude-sessions/  dev-utils/  easy-cd/  ghostex/
-│   ├── git/  github/  markets/  now-playing/  obsidian-search/
-│   ├── pomodoro/  ports/  ssh-hosts/  summarise/  todo/  weather/
-│   └── video-downloader/   # unlisted: Sven's Mac only, never in index.json
-├── scripts/      # build-index.py (writes index.json), check.py
-└── tests/        # stdlib unittest; harness.py runs a command as Pilot does
-```
+## Where things are
+
+README.md's file map shows every file with its own first line; `/Users/sven/code/agents/automation/bin/file-map .` rewrites it after you add, move or rename files.
 
 - Each extension folder is self-contained, with no shared code outside it, since Pilot installs one folder at a time. `index.json`
   carries sha256, size and executable bit per file and leaves hidden commands out.
