@@ -1,6 +1,6 @@
 # pilot-extensions — agent brief
 
-Private repo. Pilot's extension catalogue: each folder under `extensions/` is one Pilot extension, and `index.json` at the root is what Pilot's
+Public repo (Pilot reads its catalogue without a login), so nothing private goes in git. Pilot's extension catalogue: each folder under `extensions/` is one Pilot extension, and `index.json` at the root is what Pilot's
 Extensions page → Catalogue reads to install and update them (from `main`, through raw.githubusercontent.com or `gh api`).
 Pilot itself lives in `~/code/pilot`; never edit it from here.
 
