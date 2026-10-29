@@ -11,7 +11,7 @@ Pilot itself lives in `~/code/pilot`; never edit it from here.
 
 ## Where things are
 
-README.md's file map shows every file with its own first line; the `file-map` tool rewrites it after you add, move or rename files.
+The file map (every file with its own first line) is kept in Sven's vault, not in README.md, because this repo is public; the `file-map` tool rewrites it after you add, move or rename files.
 
 - Each extension folder is self-contained, with no shared code outside it, since Pilot installs one folder at a time. `index.json`
   carries sha256, size and executable bit per file and leaves hidden commands out.
