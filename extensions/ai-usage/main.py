@@ -34,7 +34,7 @@ Status: each provider's status page (status.claude.com, status.openai.com, Statu
 detached run at most every 5 minutes into paths.cache/status.json; a degraded service shows as a row under the cards.
 
 Gemini keeps no local limit, and its quota is only asked with its sign-in token, which Pilot never reads: "limit
-unknown" once the gemini CLI is on PATH, "Not set up" before.
+unknown" once the gemini CLI is on PATH; without it Gemini is left out.
 
 Claude Code tokens (a footnote on the page and in the detail, not a limit): every assistant line in
 ~/.claude/projects/**/*.jsonl carries `message.usage`. Logs changed in the last 8 days are read from where the last run
@@ -96,7 +96,6 @@ USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "c
 SESSION, WEEK = 300, 10080  # window lengths in minutes
 WARN, ALERT = 60, 85  # percent used
 BAR = 20
-SET_UP_AI = {"type": "open", "url": "pilot://open?page=ai", "title": "Set up in Pilot › AI…"}
 # The settings (the manifest's preferences), read once per run by configure().
 VIEW = {"barProviders": "both", "barWindow": "session", "pace": True, "otherCodex": True, "gemini": True}
 # Each provider's status page (Statuspage's api/v2/status.json) and usage dashboard, as CodexBar links them.
@@ -995,9 +994,8 @@ OWN_FAILED = ("sign-in failed", "Codex's sign-in stopped without signing in: %s"
 SAME = "This is the same account as one above: remove it, then add the other one."
 NOT_ASKED = ("unavailable", "Not asked: Pilot asks Codex only for the folders in this extension's Codex accounts "
                             "setting and its own accounts, and this one has no run in 8 days.")
-GEMINI_WORDS = {"missing": ("not set up", "The gemini CLI isn't installed on this Mac."),
-                "installed": ("limit unknown", "Gemini keeps no limit on this Mac, and asking Google needs your sign-in "
-                                               "token, which Pilot never reads.")}
+GEMINI_WORDS = ("limit unknown", "Gemini keeps no limit on this Mac, and asking Google needs your sign-in token, which "
+                                  "Pilot never reads.")
 FOOTNOTE = "Codex's numbers come from Codex itself. Pilot reads no sign-in tokens."
 
 
@@ -1114,18 +1112,20 @@ def codex_card(codex, now, page=False):
     return section("Codex", codex_read(codex, now), codex["name"], codex.get("plan"), blocks)
 
 
-def gemini_card(state):
-    words, text = GEMINI_WORDS[state]
-    blocks = [{"type": "markdown", "text": text}]
-    if state == "missing":
-        blocks.append({"type": "buttons", "actions": [SET_UP_AI]})
-    return section("Gemini", words[0].upper() + words[1:], None, None, blocks)
+def show_gemini(data):
+    """Gemini only once its CLI is on PATH, and only while the setting shows it."""
+    return VIEW["gemini"] and data["gemini"] == "installed"
+
+
+def gemini_card():
+    words, text = GEMINI_WORDS
+    return section("Gemini", words[0].upper() + words[1:], None, None, [{"type": "markdown", "text": text}])
 
 
 def cards(data, page=False):
     now = data["now"]
     out = [claude_card(data["claude"], now)] + [codex_card(c, now, page) for c in data["codex"]]
-    return out + [gemini_card(data["gemini"])] if VIEW["gemini"] else out
+    return out + [gemini_card()] if show_gemini(data) else out
 
 
 # The calm popover (Pilot Q138, design A): the same cards with their words cut. Pace words, emails, credit expiry and
@@ -1217,11 +1217,8 @@ def calm_codex(codex, now):
                         [codex["name"], None if shown else read], blocks)
 
 
-def calm_gemini(state):
-    words, text = GEMINI_WORDS[state]
-    if state == "missing":
-        return calm_section(None, "Gemini", sentence(words), None, None, [], [{"type": "markdown", "text": text},
-                                                                            {"type": "buttons", "actions": [SET_UP_AI]}])
+def calm_gemini():
+    words, text = GEMINI_WORDS
     return calm_section(None, "Gemini", words, None, None, [text], [])
 
 
@@ -1229,8 +1226,8 @@ def calm_cards(data):
     """The cards, then the accounts with nothing to show, a quiet line each."""
     now = data["now"]
     out = [calm_claude(data["claude"], now)] + [calm_codex(c, now) for c in data["codex"]]
-    if VIEW["gemini"]:
-        out.append(calm_gemini(data["gemini"]))
+    if show_gemini(data):
+        out.append(calm_gemini())
     return [c for c in out if c["blocks"]] + [c for c in out if not c["blocks"]]
 
 
@@ -1387,8 +1384,8 @@ def show_usage(run):
             md += ["", "%s, %s." % (codex.get("plan") or "Codex", codex_read(codex, now).lower())]
         else:
             md.append(codex_words(codex)[1])
-    if VIEW["gemini"]:
-        words, text = GEMINI_WORDS[data["gemini"]]
+    if show_gemini(data):
+        words, text = GEMINI_WORDS
         md += ["", "## Gemini", "**%s.** %s" % (words.capitalize(), text)]
     md += ["", "---", "", token_note(tokens), "", FOOTNOTE]
     send({"type": "detail", "markdown": "\n".join(md) + "\n", "metadata": rows,

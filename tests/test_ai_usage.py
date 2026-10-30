@@ -706,6 +706,7 @@ class AIUsageTests(ExtensionTestCase):
     def test_settings_hide_pace_other_codex_folders_and_gemini(self):
         self.sven_like()
         self.write(self.box.home / ".codex-pro" / "auth.json", json.dumps({"bot": SECRET_SAMPLE}))
+        self.box.shim("gemini")
         prefs = {"pace": False, "otherCodex": False, "gemini": False}
         blocks = self.popover(home=self.box.home, preferences=prefs)
         self.assertEqual([b.get("title") for b in blocks], ["Claude", "Codex", None, None])
@@ -716,11 +717,9 @@ class AIUsageTests(ExtensionTestCase):
         self.assertNotIn("## Gemini", d)
         self.assertNotIn("in reserve", d)
 
-    def test_gemini_not_set_up_until_its_cli_is_on_path(self):
-        gemini = card(self.popover(home=self.box.home), "Gemini")
-        self.assertEqual(gemini["subtitle"], "Not set up")
-        self.assertEqual(gemini["blocks"][1]["actions"],
-                         [{"type": "open", "url": "pilot://open?page=ai", "title": "Set up in Pilot › AI…"}])
+    def test_gemini_left_out_until_its_cli_is_on_path(self):
+        self.assertNotIn("Gemini", [b.get("title") for b in self.popover(home=self.box.home)])
+        self.assertNotIn("## Gemini", self.run_ext("usage", home=self.box.home).detail["markdown"])
         self.box.shim("gemini")
         gemini = card(self.popover(home=self.box.home), "Gemini")
         self.assertEqual(gemini["subtitle"], "Limit unknown")
@@ -729,11 +728,12 @@ class AIUsageTests(ExtensionTestCase):
     def test_nothing_known_still_shows_an_item_to_click(self):
         bar = self.bar(home=self.box.home)
         self.assertEqual((bar["text"], bar["gauges"], bar["tone"]), ("AI", [], None))
-        self.assertEqual([c.get("title") for c in bar["blocks"]], ["Claude", "Codex", "Gemini", None])
+        self.assertEqual([c.get("title") for c in bar["blocks"]], ["Claude", "Codex", None])
 
     def test_page_cards_then_the_token_footnote(self):
         self.sven_like()
         self.claude_fixture()
+        self.box.shim("gemini")
         blocks = self.page(home=self.box.home)
         self.assertEqual([b.get("title") for b in blocks[:3]], ["Claude", "Codex", "Gemini"])
         self.assertEqual(blocks[3]["type"], "list")
@@ -755,15 +755,15 @@ class AIUsageTests(ExtensionTestCase):
         self.assertIn("▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░` 90% left", d["markdown"])
         self.assertIn("## Codex · %s" % EMAIL, d["markdown"])
         self.assertIn("- **Limit reset credits:** 2 available", d["markdown"])
-        self.assertIn("## Gemini\n**Not set up.** The gemini CLI", d["markdown"])
+        self.assertNotIn("## Gemini", d["markdown"], "no gemini CLI, no Gemini")
         self.assertIn("Claude Code tokens: 1.2M in the last 7 days", d["markdown"])
 
     def test_no_block_running_after_a_quiet_5_hours(self):
         self.write(self.projects / "p" / "s.jsonl", [claude_line(self.now - 6 * HOUR, "msg_1", read=4000)])
-        self.assertIn("4k in the last 7 days, none in this 5-hour block", self.page(home=self.box.home)[4]["text"])
+        self.assertIn("4k in the last 7 days, none in this 5-hour block", self.page(home=self.box.home)[3]["text"])
 
     def test_no_claude_logs_no_token_counts(self):
-        self.assertIn("No Claude Code logs on this Mac", self.page(home=self.box.home)[4]["text"])
+        self.assertIn("No Claude Code logs on this Mac", self.page(home=self.box.home)[3]["text"])
 
     def age_token_count(self, seconds=6 * MIN):
         """The page's last full token count made older than the 5 minutes it is given again for."""
@@ -774,19 +774,19 @@ class AIUsageTests(ExtensionTestCase):
     def test_a_page_every_minute_counts_tokens_and_asks_codex_less_often(self):
         self.sven_like()
         main = self.claude_fixture()
-        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[4]["text"])
+        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[3]["text"])
         self.write(main, [claude_line(self.now - 5 * MIN, "msg_c", out=300000)], append=True)
         answer = json.loads(self.live_cache().read_text())
         self.live_cache().write_text(json.dumps(dict(answer, at=answer["at"] - MIN)))  # the page's next run, a minute on
-        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[4]["text"],
+        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[3]["text"],
                       "a count under 5 minutes old is given again without reading a log")
         self.assertEqual(len(self.codex_calls()), 1, "an answer under 120 s old is not asked again by the page")
         self.age_token_count()
-        self.assertIn("1.5M in this 5-hour block", self.page(home=self.box.home)[4]["text"])
+        self.assertIn("1.5M in this 5-hour block", self.page(home=self.box.home)[3]["text"])
 
     def test_a_rerun_reads_only_the_new_bytes(self):
         main = self.claude_fixture()
-        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[4]["text"])
+        self.assertIn("1.2M in this 5-hour block", self.page(home=self.box.home)[3]["text"])
         self.age_token_count()
         cache = json.loads((self.box.cache / "claude-usage.json").read_text())["files"]
         self.assertEqual(cache[str(main)]["offset"], main.stat().st_size)
@@ -796,7 +796,7 @@ class AIUsageTests(ExtensionTestCase):
         main.write_text(text.replace('"cache_read_input_tokens":698900', '"cache_read_input_tokens":111111'))
         self.assertEqual(len(main.read_text()), len(text))
         self.write(main, [claude_line(self.now - 5 * MIN, "msg_c", out=300000)], append=True)
-        self.assertIn("1.5M in this 5-hour block", self.page(home=self.box.home)[4]["text"])
+        self.assertIn("1.5M in this 5-hour block", self.page(home=self.box.home)[3]["text"])
 
     def test_while_another_refresh_runs_it_answers_from_the_cache_at_once(self):
         self.claude_fixture()
@@ -804,7 +804,7 @@ class AIUsageTests(ExtensionTestCase):
         self.age_token_count()
         with open(self.box.cache / "refresh.lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            text = self.page(home=self.box.home)[4]["text"]
+            text = self.page(home=self.box.home)[3]["text"]
             self.assertTrue(text.startswith("Still counting"), text)
             self.assertIn("1.2M in this 5-hour block", text)
 

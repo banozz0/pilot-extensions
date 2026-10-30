@@ -5,7 +5,7 @@
       "id": "ai-usage",
       "title": "AI usage",
       "icon": "📊",
-      "version": "3.3.1",
+      "version": "3.3.2",
       "description": "See how much of your Claude and Codex limits is left this session and this week, how your pace compares, and when each resets, in the menu bar, as CodexBar shows it. Add a second Codex account with Codex's own sign-in.",
       "examples": [
         "Glance at the menu bar: Claude's and Codex's logo with the session left, amber once a window is 60% used, red from 85%",
@@ -49,14 +49,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "eaaac0aa0f9902e56d40fbc74f844a27d75adc60ab56c49cfbe44d8f641b1e09",
-          "size": 3620,
+          "sha256": "bc0acd4c5966d3e12934d5a2368e7d482335f0f144f87c48309101762b27b923",
+          "size": 3640,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "c2128b7fe226b524b4171efaa089ebddab5e4c8e5f66e34250250e47be3a83c6",
-          "size": 74763,
+          "sha256": "6ab1da3ea0511478d42390b02bdaf3a38c82b865fc75eb9cf85bf8772a2e6941",
+          "size": 74290,
           "executable": true
         }
       ]
