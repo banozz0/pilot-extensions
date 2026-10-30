@@ -13,14 +13,16 @@ point lower on 2026-10-11):
   and plan (`organizationType`, `organizationRateLimitTier`). Only those two keys are used; the file holds no token.
 
 Codex, per account (a CODEX_HOME folder): the folders in the `codexHomes` preference, then Pilot's own accounts (each a
-folder under paths.data/codex-accounts, made by Add Codex account, which runs Codex's own `codex login` in it), are asked
+folder under paths.data/codex-accounts, made by Add Codex account, which runs Codex's own `codex login` in it), then
+any other folder signed in to Codex (a ~/.codex-* or Pilot › AI's own Codex home, holding an auth.json, never opened)
+while the `otherCodex` setting is on, one row each, an account seen twice once, are asked
 through Codex's own `codex app-server` (`account/read`: email and plan; `account/rateLimits/read`: the 5-hour and weekly
 windows, credits and limit reset credits). Codex signs in with its own login; Pilot never reads or copies it, and only
 one Pilot process at a time runs Codex in a folder (a lock per folder: an ask or a sign-in that finds it held skips),
 so two never refresh one login at once. The bar never waits for Codex: it shows the last answer
 (paths.cache/codex-<hash>.json) and hands a stale one to one detached refresh; a popover or page asks again inline when
-the answer is over 30 s old. Without an answer, and for any other ~/.codex-* folder (listed but never asked, since
-asking makes Codex use that folder's login), the numbers come from the tail of the newest session logs
+the answer is over 30 s old. Without an answer, and for a ~/.codex-* folder with logs but no login (listed, never
+asked), the numbers come from the tail of the newest session logs
 (sessions/YYYY/MM/DD/*.jsonl, archived_sessions): `token_count` events whose `payload.rate_limits` holds `primary` and
 `secondary`, each `used_percent`, `window_minutes` and `resets_at` (older Codex: `resets_in_seconds`), plus `credits`.
 
@@ -90,6 +92,7 @@ PAGE_SIGNING_IN_REFRESH = 15  # a page too, less often: it counts Claude Code's 
 LINE_AHEAD = 600  # the status line wins over Claude Code's cached read only when this much newer
 STATUS_FILE, STATUS_LOCK, STATUS_EVERY = "status.json", "status.lock", 300
 CODEX_HOME_NAME = re.compile(r"\.codex(-[A-Za-z0-9._-]+)?\Z")
+PILOT_AI_CODEX = os.path.join("Library", "Application Support", "Pilot", "codex")  # Pilot › AI's CODEX_HOME (Q203)
 STATUSLINE = os.path.join(".local", "state", "ghostex", "agent-hooks", "claude-statusline")
 STATUSLINE_TRIES = 40  # newest status-line files read for one with rate_limits
 USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
@@ -271,9 +274,14 @@ def own_accounts(data_dir):
     return [os.path.join(root, n) for n in sorted(names, key=int) if os.path.isdir(os.path.join(root, n))]
 
 
+def signed_in(path):
+    """Whether Codex keeps a login in this folder; the file is never opened."""
+    return os.path.exists(os.path.join(path, "auth.json"))
+
+
 def codex_homes(home, run):
-    """(the preference's folders, Pilot's own accounts, other folders): the first two asked live, the others (any
-    ~/.codex-* holding a login or logs) read from their logs only."""
+    """(the preference's folders, Pilot's own accounts, other logins, other folders): the first three asked live (other
+    logins: any ~/.codex-* or Pilot › AI's Codex home signed in), the last (a ~/.codex-* with logs only) from its logs."""
     raw = (run.get("preferences") or {}).get("codexHomes")
     asked = []
     for part in (raw if isinstance(raw, str) and raw.strip() else "~/.codex").split(","):
@@ -285,13 +293,16 @@ def codex_homes(home, run):
         names = sorted(os.listdir(home))
     except OSError:
         names = []
-    others = []
-    for name in names:
-        path = os.path.join(home, name)
-        if CODEX_HOME_NAME.match(name) and path not in asked and (
-                os.path.exists(os.path.join(path, "auth.json")) or os.path.isdir(os.path.join(path, "sessions"))):
+    logins, others = [], []
+    pilot_ai = os.path.join(home, PILOT_AI_CODEX)
+    for path in [os.path.join(home, n) for n in names if CODEX_HOME_NAME.match(n)] + [pilot_ai]:
+        if path in asked:
+            continue
+        if signed_in(path):
+            logins.append(path)
+        elif os.path.isdir(os.path.join(path, "sessions")) and path != pilot_ai:
             others.append(path)
-    return asked, own, others
+    return asked, own, logins, others
 
 
 def codex_files(codex_home, now):
@@ -609,13 +620,14 @@ def codex_accounts(home, now, run, ask_until=None, fresh=LIVE_FRESH):
     `fresh` s old (30, a page's 120); without it an answer over 120 s old goes to one background refresh. Pilot's own
     account signing in now or signed out is shown as such and never asked."""
     cache_dir = (run.get("paths") or {}).get("cache")
-    setting, own, others = codex_homes(home, run)
+    setting, own, logins, others = codex_homes(home, run)
+    logins, others = (logins, others) if VIEW["otherCodex"] else ([], [])
     pending = {}
     for path in own:
         link = signing_in(cache_dir, path)
-        if link is not None or not os.path.exists(os.path.join(path, "auth.json")):
+        if link is not None or not signed_in(path):
             pending[path] = link
-    asked = setting + [p for p in own if p not in pending]
+    asked = setting + [p for p in own if p not in pending] + logins
     answers = {p: load_live(cache_dir, p) for p in asked}
     stale = [p for p in asked if not answers[p] or now - answers[p]["at"] > (fresh if ask_until else LIVE_STALE)]
     if stale and ask_until:
@@ -623,12 +635,12 @@ def codex_accounts(home, now, run, ask_until=None, fresh=LIVE_FRESH):
     elif stale and cache_dir and shutil.which("codex"):
         spawn("--codex", cache_dir, *stale)
     out, known = [], set()
-    for path in setting + own + (others if VIEW["otherCodex"] else []):
+    for path in setting + own + logins + others:
         if path in pending:
             failed = failed_line(cache_dir, path) if pending[path] is None else None
             out.append({"state": "signing_in" if pending[path] is not None else "failed" if failed else "signed_out",
                         "link": pending[path], "failed": failed, "home": "Pilot account", "name": "Pilot account",
-                        "own": path, "asked": False, "read_at": None, "source": None, "since": "update"})
+                        "own": path, "read_at": None, "source": None, "since": "update"})
             continue
         live, answer, email = path in answers, answers.get(path), answer_email(answers.get(path))
         logs = codex_logs(path, now)
@@ -636,11 +648,13 @@ def codex_accounts(home, now, run, ask_until=None, fresh=LIVE_FRESH):
         provider = logs
         if answer and (logs["state"] != "ok" or answer["at"] >= (logs["read_at"] or 0)):
             provider = from_live(answer, now)
-        provider.update(home="Pilot account" if path in own else tilde(path, home), asked=live,
-                        own=path if path in own else None, same=bool(email and email in known))
+        if path in logins and email and email in known:
+            continue  # the same account as a row above, found again in another folder
+        label = "Pilot account" if path in own else "Pilot AI" if path == os.path.join(home, PILOT_AI_CODEX) else tilde(path, home)
+        provider.update(home=label, own=path if path in own else None, same=bool(email and email in known))
         provider["name"] = provider.get("who") or provider["home"]
         provider["since"] = "update" if provider.get("source") == "live" else "run"
-        if live or provider["state"] == "ok" or os.path.exists(os.path.join(path, "auth.json")):
+        if live or provider["state"] == "ok" or signed_in(path):
             out.append(provider)
             if email:
                 known.add(email)
@@ -992,8 +1006,6 @@ OWN_WORDS = {"signing_in": ("signing in", "Waiting for you to sign in to Codex i
 OWN_QUIET = ("unavailable", "Codex didn't answer for this account. Sign in again.")
 OWN_FAILED = ("sign-in failed", "Codex's sign-in stopped without signing in: %s")
 SAME = "This is the same account as one above: remove it, then add the other one."
-NOT_ASKED = ("unavailable", "Not asked: Pilot asks Codex only for the folders in this extension's Codex accounts "
-                            "setting and its own accounts, and this one has no run in 8 days.")
 GEMINI_WORDS = ("limit unknown", "Gemini keeps no limit on this Mac, and asking Google needs your sign-in token, which "
                                   "Pilot never reads.")
 FOOTNOTE = "Codex's numbers come from Codex itself. Pilot reads no sign-in tokens."
@@ -1004,7 +1016,7 @@ def codex_words(codex):
         return OWN_FAILED[0], OWN_FAILED[1] % codex["failed"]
     if codex["own"]:
         return OWN_WORDS.get(codex["state"], OWN_QUIET)
-    return CODEX_WORDS[codex["state"]] if codex["asked"] else NOT_ASKED
+    return CODEX_WORDS[codex["state"]]
 
 
 def codex_read(codex, now):
@@ -1134,7 +1146,6 @@ def cards(data, page=False):
 # note and links blocks.
 
 STALE = 30 * 60  # a read older than this says when it was read under its card's title
-NOT_ASKED_WORDS = "not asked"
 
 
 def draws_calm(run):
@@ -1199,8 +1210,7 @@ def calm_codex(codex, now):
         if own:
             return calm_section("openai", "Codex", sentence(words), codex["name"], None, [codex["name"]],
                                 [{"type": "markdown", "text": text}] + account_buttons(codex, False))
-        quiet = NOT_ASKED_WORDS if (words, text) == NOT_ASKED else words
-        return calm_section("openai", "Codex", quiet, codex["name"], None, [text], [])
+        return calm_section("openai", "Codex", words, codex["name"], None, [text], [])
     blocks = [calm_meter(w, codex["since"], now, headroom=True) for w in codex["windows"]]
     credits = calm_credits(codex.get("reset_credits"), now)
     if credits:

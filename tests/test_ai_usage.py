@@ -357,7 +357,7 @@ class AIUsageTests(ExtensionTestCase):
         self.assertIn(ai_usage.FOOTNOTE, json.dumps(self.page(home=self.box.home, pilot=self.CALM)), "the page keeps every word")
 
     def test_calm_status_words_and_quiet_accounts_last(self):
-        """A status that is not fine says its word beside its name; an account Codex is not asked for, or a Gemini whose
+        """A status that is not fine says its word beside its name; an account Codex didn't answer for, or a Gemini whose
         limit is unknown, is one quiet line after the cards, why on hover."""
         n = self.now
         self.status_pages({"codex": {"indicator": "minor", "description": "Partial System Degradation",
@@ -371,7 +371,7 @@ class AIUsageTests(ExtensionTestCase):
         quiet = [b for b in sections if not b["blocks"]]
         self.assertEqual(sections[-len(quiet):], quiet, "the quiet lines come after every card")
         pro = next(b for b in quiet if b.get("aside") == "~/.codex-pro")
-        self.assertEqual((pro["icon"], pro["subtitle"], pro["help"]), ("openai", "not asked", ai_usage.NOT_ASKED[1]))
+        self.assertEqual((pro["icon"], pro["subtitle"], pro["help"]), ("openai", "no logs", ai_usage.CODEX_WORDS["missing"][1]))
         gemini = card(blocks, "Gemini")
         self.assertEqual((gemini["subtitle"], gemini["blocks"]), ("limit unknown", []))
         codex_link = blocks[-1]["items"][1]
@@ -642,7 +642,7 @@ class AIUsageTests(ExtensionTestCase):
         codex = card(self.popover(home=self.box.home), "Codex")
         self.assertEqual(codex["subtitle"], "No run in 8 days")
 
-    def test_several_codex_accounts_only_the_listed_ones_asked(self):
+    def test_several_codex_accounts_every_login_asked(self):
         n = self.now
         self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, n + HOUR), live_window(30, 10080, n + DAY)))
         self.codex_says(codex_answer(OTHER, "team", live_window(70, 300, n + HOUR), None), home=".codex-work")
@@ -654,13 +654,38 @@ class AIUsageTests(ExtensionTestCase):
         blocks = self.popover(home=self.box.home, preferences=prefs)
         self.check_quiet(json.dumps(blocks))
         self.assertEqual([(c["aside"], c.get("asideNote") or c["subtitle"]) for c in cards(blocks, "Codex")],
-                         [(OTHER, "Team"), (EMAIL, "Plus"), ("~/.codex-dead", "Unavailable"),
+                         [(OTHER, "Team"), (EMAIL, "Plus"), ("~/.codex-dead", "No logs"),
                           ("~/.codex-pro", "Last run %s" % hhmm(n - HOUR))])
-        self.assertEqual(sorted(self.codex_calls()), [str(self.box.home / ".codex"), str(self.box.home / ".codex-work")],
-                         "a folder not in the setting is never asked: asking makes Codex use its login")
+        self.assertEqual(sorted(self.codex_calls()), [str(self.box.home / h) for h in (".codex", ".codex-dead", ".codex-pro",
+                                                                                     ".codex-work")],
+                         "every folder signed in to Codex is asked, the setting's first")
         self.assertEqual(self.face(self.bar(home=self.box.home, preferences=prefs)), "openai 30%", "the first listed account")
         self.assertIn("Codex %s: Session 30%% left · Codex %s: Session 80%% left" % (OTHER, EMAIL),
                       self.run_ext("summary", home=self.box.home, preferences=prefs).of_type("hud")[0]["text"])
+
+    def test_a_second_account_in_another_folder_is_its_own_row(self):
+        """Sven's Mac (Q588): ~/.codex and ~/.codex-pro each signed in, both asked and shown by email; Pilot › AI's own
+        Codex home signed in to the first account again is left out; a ~/.codex-* with logs only is read, never asked;
+        List other Codex folders off asks only ~/.codex."""
+        n = self.now
+        self.codex_says(codex_answer(EMAIL, "plus", live_window(20, 300, n + HOUR), live_window(30, 10080, n + DAY)))
+        for home, who in ((".codex", None), (".codex-pro", OTHER), (ai_usage.PILOT_AI_CODEX, EMAIL.upper())):
+            self.write(self.box.home / home / "auth.json", json.dumps({"bot": SECRET_SAMPLE}))
+            if who:
+                self.codex_says(codex_answer(who, "pro", live_window(60, 300, n + HOUR), None), home=home)
+        self.codex_log("logs", [codex_event(n - HOUR, window(15.0, 300, n + HOUR), None)], home=".codex-old")
+        off = self.popover(home=self.box.home, preferences={"otherCodex": False})
+        self.assertEqual([c["aside"] for c in cards(off, "Codex")], [EMAIL])
+        self.assertEqual(self.codex_calls(), [str(self.box.home / ".codex")], "the setting off asks only ~/.codex")
+        blocks = self.popover(home=self.box.home)
+        self.check_quiet(json.dumps(blocks))
+        self.assertEqual([(c["aside"], c.get("asideNote") or c["subtitle"]) for c in cards(blocks, "Codex")],
+                         [(EMAIL, "Plus"), (OTHER, "Pro"), ("~/.codex-old", "Last run %s" % hhmm(n - HOUR))])
+        self.assertEqual(sorted(self.codex_calls()), sorted(str(self.box.home / h) for h in
+                                                            (".codex", ".codex-pro", ai_usage.PILOT_AI_CODEX)),
+                         "~/.codex, answered by the run before, is not asked again")
+        self.assertEqual(self.face(self.bar(home=self.box.home)), "openai 80%", "the bar keeps the first account")
+        self.assertIn("Codex %s: Session 80%% left, Weekly 70%% left · Codex %s: Session 40%% left" % (EMAIL, OTHER), self.hud())
 
     def test_the_bar_never_waits_for_codex_and_refreshes_behind(self):
         n = self.now
