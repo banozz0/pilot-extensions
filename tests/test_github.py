@@ -23,23 +23,26 @@ def pr(number, title, repo, checks, branch, waiting_age=3600, draft=False, revie
             "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": checks} if checks else None}}]}}
 
 
-GRAPHQL = {"data": {
-    "viewer": {"login": "sven", "repositories": {"nodes": [
-        {"nameWithOwner": "o/a", "pushedAt": stamp(600)},
-        {"nameWithOwner": "x/c", "pushedAt": stamp(86400)},
-        {"nameWithOwner": "o/b", "pushedAt": stamp(86400 * 3)},
-        {"nameWithOwner": "o/old", "pushedAt": stamp(86400 * 60)}]}},
-    "mine": {"nodes": [pr(7, "Add the thing", "o/a", "SUCCESS", "feat/thing", review="APPROVED"),
-                       pr(9, "Half done", "x/c", "FAILURE", "wip", waiting_age=86400 * 2, draft=True),
-                       {}]},
-    "review": {"nodes": [pr(3, "Please look", "o/b", "PENDING", "fix/x", waiting_age=120)]},
-    "issues": {"nodes": [{"number": 12, "title": "It breaks", "url": "https://github.com/o/a/issues/12",
-                          "updatedAt": stamp(7200), "repository": {"nameWithOwner": "o/a"},
-                          "labels": {"nodes": [{"name": "bug"}]}, "comments": {"totalCount": 3}},
-                         {"number": 4, "title": "Elsewhere", "url": "https://github.com/x/c/issues/4",
-                          "updatedAt": stamp(60), "repository": {"nameWithOwner": "x/c"},
-                          "labels": {"nodes": []}, "comments": {"totalCount": 0}}]},
-}}
+def graphql():
+    """gh's GraphQL answer, each age counted from now: built per test, never at import, so the suite's length
+    never ages it."""
+    return {"data": {
+        "viewer": {"login": "sven", "repositories": {"nodes": [
+            {"nameWithOwner": "o/a", "pushedAt": stamp(600)},
+            {"nameWithOwner": "x/c", "pushedAt": stamp(86400)},
+            {"nameWithOwner": "o/b", "pushedAt": stamp(86400 * 3)},
+            {"nameWithOwner": "o/old", "pushedAt": stamp(86400 * 60)}]}},
+        "mine": {"nodes": [pr(7, "Add the thing", "o/a", "SUCCESS", "feat/thing", review="APPROVED"),
+                           pr(9, "Half done", "x/c", "FAILURE", "wip", waiting_age=86400 * 2, draft=True),
+                           {}]},
+        "review": {"nodes": [pr(3, "Please look", "o/b", "PENDING", "fix/x", waiting_age=120)]},
+        "issues": {"nodes": [{"number": 12, "title": "It breaks", "url": "https://github.com/o/a/issues/12",
+                              "updatedAt": stamp(7200), "repository": {"nameWithOwner": "o/a"},
+                              "labels": {"nodes": [{"name": "bug"}]}, "comments": {"totalCount": 3}},
+                             {"number": 4, "title": "Elsewhere", "url": "https://github.com/x/c/issues/4",
+                              "updatedAt": stamp(60), "repository": {"nameWithOwner": "x/c"},
+                              "labels": {"nodes": []}, "comments": {"totalCount": 0}}]},
+    }}
 
 
 def wf_run(run_id, workflow_id, name, branch, conclusion, age, status="completed", title="Commit message"):
@@ -48,18 +51,20 @@ def wf_run(run_id, workflow_id, name, branch, conclusion, age, status="completed
             "html_url": "https://github.com/run/%d" % run_id}
 
 
-RUNS = {
-    # o/a: CI's latest on main failed; Lint's latest passed after an earlier failure.
-    "o_a": {"workflow_runs": [wf_run(11, 1, "CI", "main", "failure", 600),
-                              wf_run(12, 2, "Lint", "main", "success", 700),
-                              wf_run(10, 1, "CI", "main", "success", 900),
-                              wf_run(13, 2, "Lint", "main", "failure", 1000)]},
-    # o/b: failed, then fixed by a later run, then one still running: nothing to show.
-    "o_b": {"workflow_runs": [wf_run(21, 1, "CI", "dev", None, 60, status="in_progress"),
-                              wf_run(20, 1, "CI", "dev", "failure", 600)]},
-    # x/c: timed out on a branch, the run named like its workflow.
-    "x_c": {"workflow_runs": [wf_run(31, 5, "Nightly", "dev", "timed_out", 7200, title="Nightly")]},
-}
+def runs():
+    """Each repo's workflow runs, each age counted from now: built per test, like graphql()."""
+    return {
+        # o/a: CI's latest on main failed; Lint's latest passed after an earlier failure.
+        "o_a": {"workflow_runs": [wf_run(11, 1, "CI", "main", "failure", 600),
+                                  wf_run(12, 2, "Lint", "main", "success", 700),
+                                  wf_run(10, 1, "CI", "main", "success", 900),
+                                  wf_run(13, 2, "Lint", "main", "failure", 1000)]},
+        # o/b: failed, then fixed by a later run, then one still running: nothing to show.
+        "o_b": {"workflow_runs": [wf_run(21, 1, "CI", "dev", None, 60, status="in_progress"),
+                                  wf_run(20, 1, "CI", "dev", "failure", 600)]},
+        # x/c: timed out on a branch, the run named like its workflow.
+        "x_c": {"workflow_runs": [wf_run(31, 5, "Nightly", "dev", "timed_out", 7200, title="Nightly")]},
+    }
 
 
 class GithubTests(ExtensionTestCase):
@@ -70,8 +75,8 @@ class GithubTests(ExtensionTestCase):
         self.addCleanup(self.wait_idle)
         self.fixtures = self.box.root / "gh"
         self.fixtures.mkdir()
-        (self.fixtures / "graphql.json").write_text(json.dumps(GRAPHQL))
-        for name, body in RUNS.items():
+        (self.fixtures / "graphql.json").write_text(json.dumps(graphql()))
+        for name, body in runs().items():
             (self.fixtures / ("runs_%s.json" % name)).write_text(json.dumps(body))
         self.fake_gh()
         self.box.shim("open")

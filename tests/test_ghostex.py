@@ -23,7 +23,10 @@ def session(ref, title, project, status, activity="idle", agent="claude", kind="
     return s
 
 
-SESSIONS = {"ok": True, "projects": [{"customAgents": [{"agentId": "custom-designer-x1", "name": "designer"}]}],
+def sessions():
+    """Ghostex's sessions answer, each age counted from now: built per test, never at import, so the suite's
+    length never ages it."""
+    return {"ok": True, "projects": [{"customAgents": [{"agentId": "custom-designer-x1", "name": "designer"}]}],
             "sessions": [
                 session("S1:P1:G1", "Asleep long ago", "pilot", "sleep", age=86400 * 3),
                 session("S1:P1:G2", "Idle one", "pilot", "running", age=600, sessionTag="testing"),
@@ -98,7 +101,8 @@ class GhostexTests(ExtensionTestCase):
     def setUp(self):
         super().setUp()
         self.config = {}
-        self.fake("sessions", SESSIONS)
+        self.sessions = sessions()
+        self.fake("sessions", self.sessions)
         self.fake("read-custom-session-tags", TAGS)
         self.fake("read-session-chat", CHAT)
         fake = self.box.root / "fake_ghostex.py"
@@ -183,7 +187,7 @@ class GhostexTests(ExtensionTestCase):
         self.assertEqual((line["text"], line["tone"]), ("👻 1", "warn"))
 
     def test_bar_counts_working_sessions_and_is_the_ghost_alone_when_none_work(self):
-        quiet = dict(SESSIONS, sessions=[s for s in SESSIONS["sessions"] if s.get("pendingQuestionCount") is None])
+        quiet = dict(self.sessions, sessions=[s for s in self.sessions["sessions"] if s.get("pendingQuestionCount") is None])
         self.fake("sessions", quiet)
         line = self.bar()
         self.assertEqual((line["text"], line.get("tone")), ("👻 2", None))
