@@ -12,6 +12,7 @@ step deletes what it converted, so it never sees ~/Downloads. Cancel deletes onl
 The bar item (Q484) is 📥 while idle and 📥 and the percent while a download runs, asked every 60 s (Pilot's floor) and
 at once after Download or Cancel; its popover follows the download every 2 s, and when idle offers the copied link's
 formats and a box to paste a link into, Return saving it in the last format used. Only the popover reads the clipboard.
+The page (Sven, 2026-10-31) has the same box, a button per format beside it, then the progress and the saved file.
 Python 3.9 stdlib only, as macOS's /usr/bin/python3.
 """
 import hashlib
@@ -590,17 +591,34 @@ def saved_block(job):
     return {"type": "list", "title": "Saved", "items": [row]}
 
 
+def page_box(last):
+    """The page's box (Sven, 2026-10-31): a pasted link, then a format's button, the last one used first and on Return. An
+    older Pilot ignores `actions` and draws the box with its arrow, Return saving in the last format."""
+    order = sorted(FORMATS, key=lambda f: f["id"] != last)
+    runs = [run_action("download", f["title"], {"format": f["id"]}) for f in order]
+    return {"type": "section", "title": "Download", "subtitle": "YouTube, X or Twitch · saved to ~/Downloads", "blocks": [
+        {"type": "input", "placeholder": "Paste a YouTube, X or Twitch link", "action": runs[0], "actions": runs[1:]}]}
+
+
 def page(run, paths):
-    """The page: a download's progress, asked every 2 s while it runs; the last saved file; else how to start one."""
+    """The page: a download's progress, asked every 2 s while it runs; else what is missing, or the box to paste a link
+    into and pick a format, over the last saved file or why the last try failed."""
     job = read_json(paths.job)
     if alive(job):
         return send({"type": "blocks", "refresh": 2, "blocks": running_blocks(run, job)})
+    rows = install_rows()
+    if rows:
+        return send({"type": "blocks", "blocks": [{"type": "list", "title": "Video downloader needs", "items": rows}]})
+    last = read_json(paths.last).get("format")
+    blocks = [page_box(last if last in FORMAT else "best")]
     if job.get("status") == "saved" and job.get("path"):
-        return send({"type": "blocks", "blocks": [saved_block(job)]})
-    words = "Copy a YouTube, X or Twitch link, then open **Video downloader** in Hyper+Space and pick a format."
-    if job.get("status") == "failed":
-        words = "The last download failed: %s\n\n%s" % (job.get("error", ""), words)
-    send({"type": "blocks", "blocks": [{"type": "markdown", "text": words}]})
+        blocks.append(saved_block(job))
+    elif job.get("status") == "failed":
+        blocks.append({"type": "markdown", "text": "The last download failed: %s" % job.get("error", "")})
+    else:
+        blocks.append({"type": "markdown", "text": "Or copy a link and open **Video downloader** in Hyper+Space, or click 📥 "
+                                                   "in the menu bar."})
+    send({"type": "blocks", "blocks": blocks})
 
 
 def paste_box(last):

@@ -676,11 +676,11 @@
       "id": "summarise",
       "title": "Summarise",
       "icon": "📝",
-      "version": "1.1.0",
-      "description": "Summarises a YouTube video, a web page or a document with Pilot's AI, with its full text beside it. Save it as Markdown to Downloads, or ask about it. Its menu-bar item summarises what you copied in a click.",
+      "version": "1.2.0",
+      "description": "Summarises a YouTube video, a web page or a document with Pilot's AI, with its full text beside it. Save it as Markdown to Downloads, or ask about it. Its page takes a pasted link or a chosen file; its menu-bar item summarises what you copied in a click.",
       "examples": [
         "Copy a YouTube link, open Summarise, Return: its page shows the summary and the transcript",
-        "Copy a link, click 📝 in the menu bar, then its row: the summary opens"
+        "On its page, paste a link or choose a file, then Summarise: the summary shows there, with Copy summary"
       ],
       "requires": [
         "python3"
@@ -707,14 +707,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "2abb1302157317df57f29975dd610e47de66d6fc43ee254e3d0c4da21e295112",
-          "size": 1784,
+          "sha256": "b9d3aaea4099009ea932fef65d6d6ff5a8c7833b0aae95b8adaf952569e4eca9",
+          "size": 1861,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "41e8a446d483f011f25263d38e8c348a978bb4c69fc63a71dd5e590c30e0f890",
-          "size": 33393,
+          "sha256": "53053b65b6cc2886b95f20bc71640faa5860b37c7f11c6dab01eeca29783de6d",
+          "size": 34630,
           "executable": true
         }
       ]

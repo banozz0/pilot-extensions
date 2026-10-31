@@ -252,7 +252,7 @@ class ExtensionTestCase(unittest.TestCase):
     def assertBlocksShape(self, blocks, types=BLOCK_TYPES):
         """Every block as Pilot decodes it (stories 161 and 165): a known type with its fields; a list's items and the
         buttons' actions as an item's; a section's blocks one level deep, a meter's resetsAt seconds since 1970, its mark 0
-        to 100 and value a string; a chat's messages (20 at most), an input's run actions; a hero's value and at most 3
+        to 100 and value a string; a chat's messages (20 at most), an input's run actions (its extra ones titled, 5 at most) and file kinds; a hero's value and at most 3
         stats, a strip's 1 to 7 columns, each a label and a glyph, high or low (Omarchy ideas T4); Pilot Q138: a help on a
         meter or section, a section's icon claude or openai, a note's text, a links row's 1 to 6 links, each a title or one
         of Pilot's icons and its actions."""
@@ -329,6 +329,13 @@ class ExtensionTestCase(unittest.TestCase):
                     if key in block or key == "action":
                         self.assertEqual(block[key]["type"], "run", block)  # only a run takes typed text
                         self.assertActionShape(block[key], ITEM_ACTIONS)
+                # Pilot 2026-10-31: more runs that take the text, each a titled button; a Choose button's file kinds.
+                self.assertLessEqual(len(block.get("actions", [])), 5)
+                for action in block.get("actions", []):
+                    self.assertEqual(action["type"], "run", block)
+                    self.assertIsInstance(action.get("title"), str)
+                    self.assertActionShape(action, ITEM_ACTIONS)
+                self.assertTrue(all(isinstance(k, str) and k for k in block.get("files", [])), block)
             else:
                 self.assertTrue(block["actions"])
                 for action in block["actions"]:

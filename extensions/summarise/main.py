@@ -9,6 +9,8 @@ the source, opens the page and asks Pilot's AI through an `ai` action (ADR 0010,
 back as `summarised`'s input; `ask` and `answered` do the same for a question. The AI runs only as Sven runs one of
 those (Q478): the list and the page read the disk and never ask it, and the page asks again every 2 s only while an
 answer is on its way. Each source is one JSON file in paths.data/items; paths.data/current names the one the page shows.
+The page leads with a box (Sven, 2026-10-31): a link or a file's path pasted, or a document picked with its Choose button,
+and Summarise runs `fetch` on it, as the list's row would.
 `bar` is the menu-bar item (Q485): 📝, with … while a summary is on its way, from the disk alone; its popover, asked on a
 click, offers what is copied (a link, a Finder file or text) as one row whose click summarises it, a box to paste a link
 or text into, and the last summary. Only the popover reads the clipboard, and the AI still runs only on a click.
@@ -46,6 +48,8 @@ DOCUMENTS = ("com.adobe.pdf", "public.plain-text", "public.rtf", "net.daringfire
              "org.openxmlformats.wordprocessingml.document", "com.microsoft.word.doc", "org.oasis-open.opendocument.text")
 RICH = {".rtf", ".rtfd", ".doc", ".docx", ".odt", ".html", ".htm", ".webarchive", ".wordml"}
 NOUN = {"video": "video", "page": "page", "doc": "document", "text": "text"}
+# What the page's Choose button offers: the documents `document` reads.
+PICKED = ["pdf", "txt", "md", "markdown", "rtf", "rtfd", "doc", "docx", "odt", "html", "htm", "webarchive"]
 SENT = 150000  # of a source, how much goes to Pilot's AI: Pilot's own cut (ExtensionAI.longest)
 SUMMARY_TASK = ("Summarise this %s in 3 to 6 short Markdown bullets of its main points, in the source's own language. "
                 "Bullets only: no heading and no closing line.")
@@ -673,23 +677,37 @@ def bar(run, store):
     send(answer)
 
 
+def new_box():
+    """The page's box: a link or a file's path pasted, or (a Pilot from 2026-10-31) a document chosen, then Summarise. An
+    older Pilot ignores `files` and draws the box with its arrow, and a pasted path still reads."""
+    return {"type": "section", "title": "Summarise", "blocks": [
+        {"type": "input", "placeholder": "Paste a YouTube link, a web page's link or a file's path",
+         "action": run_action("fetch", "Summarise"), "files": PICKED}]}
+
+
 def page(run, store):
-    """The page: the source shown, its summary, Ask about it, the full text, and the earlier ones; disk only, asked again
-    every 2 s while an answer is on its way."""
+    """The page: a box to summarise something new; the source shown, its summary with Copy, Ask about it, the full text,
+    and the earlier ones; disk only, asked again every 2 s while an answer is on its way."""
     item = store.current(text=True)
     if not item:
-        return send({"type": "blocks", "blocks": [{"type": "markdown", "text":
-                    "Copy a YouTube link, a web page's link or a document in Finder, then open **Summarise** in Hyper+Space. "
-                    "Hyper+drag over a link shows Summarise in the selection pill too."}]})
+        blocks = [new_box(), {"type": "markdown", "text":
+                  "Or copy a link or a document in Finder and open **Summarise** in Hyper+Space or from 📝 in the menu bar. "
+                  "Hyper+drag over a link shows Summarise in the selection pill too."}]
+        others = store.earlier()[:10]
+        if others:
+            blocks.append(earlier_block(others))
+        return send({"type": "blocks", "blocks": blocks})
     name, status = noun(item.get("kind")), status_of(item)
     facts = [{"label": label, "value": str(item[key])} for label, key in (("Channel", "channel"), ("Length", "length"))
              if item.get(key)]
     if item.get("words"):
         facts.append({"label": "Words", "value": "{:,}".format(item["words"])})
     head = [{"type": "stats", "items": facts}] if facts else []
-    blocks = [{"type": "section", "title": item.get("title") or "Summary", "subtitle": short(item.get("source", "")),
-               "aside": name.capitalize(), "blocks": head}]
+    blocks = [new_box(), {"type": "section", "title": item.get("title") or "Summary", "subtitle": short(item.get("source", "")),
+                          "aside": name.capitalize(), "blocks": head}]
     buttons = []
+    if status == "done" and item.get("summary"):
+        buttons.append({"type": "copy", "text": item["summary"], "title": "Copy summary"})
     if item.get("text"):
         buttons.append(run_action("save", "Save as .md", {"id": item["id"]}, icon="📄"))
     if item.get("kind") != "text":
@@ -712,13 +730,17 @@ def page(run, store):
                        "blocks": [{"type": "markdown", "text": text}]})
     others = [i for i in store.earlier() if i["id"] != item["id"]][:10]
     if others:
-        blocks.append({"type": "list", "title": "Earlier", "items": [
-            {"id": i["id"], "title": i.get("title") or short(i.get("source", "")), "subtitle": noun(i.get("kind")).capitalize(),
-             "actions": [run_action("show", "Show", {"id": i["id"]})]} for i in others]})
+        blocks.append(earlier_block(others))
     answer = {"type": "blocks", "blocks": blocks}
     if status in ("reading", "summarising") or item.get("asking"):
         answer["refresh"] = 2
     send(answer)
+
+
+def earlier_block(items):
+    return {"type": "list", "title": "Earlier", "items": [
+        {"id": i["id"], "title": i.get("title") or short(i.get("source", "")), "subtitle": noun(i.get("kind")).capitalize(),
+         "actions": [run_action("show", "Show", {"id": i["id"]})]} for i in items]}
 
 
 COMMANDS = {"summarise": summarise, "fetch": fetch, "summarised": summarised, "ask": ask, "answered": answered,
