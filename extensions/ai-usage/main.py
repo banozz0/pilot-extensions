@@ -17,7 +17,8 @@ folder under paths.data/codex-accounts, made by Add Codex account, which runs Co
 any other folder signed in to Codex (a ~/.codex-* or Pilot › AI's own Codex home, holding an auth.json, never opened)
 while the `otherCodex` setting is on, one row each, an account seen twice once, are asked
 through Codex's own `codex app-server` (`account/read`: email and plan; `account/rateLimits/read`: the 5-hour and weekly
-windows, credits and limit reset credits). Codex signs in with its own login; Pilot never reads or copies it, and only
+windows, credits and limit reset credits; `account/rateLimitResetCredit/consume`: Redeem reset, asked first, the call
+Codex's own Redeem reset makes). Codex signs in with its own login; Pilot never reads or copies it, and only
 one Pilot process at a time runs Codex in a folder (a lock per folder: an ask or a sign-in that finds it held skips),
 so two never refresh one login at once. The bar never waits for Codex: it shows the last answer
 (paths.cache/codex-<hash>.json) and hands a stale one to one detached refresh; a popover or page asks again inline when
@@ -64,6 +65,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 START = time.monotonic()
 DAY = 86400
@@ -84,6 +86,7 @@ TOKENS_FILE = "claude-tokens.json"
 LIVE_WAIT = 3.0  # seconds a popover waits for Codex; a page waits 2 s, leaving time to count Claude Code tokens
 PAGE_WAIT = 2.0
 REFRESH_WAIT = 10.0  # seconds Refresh now waits for Codex; a no-view command has 30
+REDEEM_WAIT = 20.0  # seconds Redeem reset waits for Codex's answer, leaving time to ask the account again
 CODEX_TAILS = (256 * 1024, 4 * 1024 * 1024, 32 * 1024 * 1024)
 ACCOUNTS = "codex-accounts"  # Pilot's own Codex accounts, one CODEX_HOME each, under paths.data
 LOGIN_WAIT = 900  # seconds a `codex login` may wait for the browser
@@ -425,10 +428,10 @@ def codex_logs(codex_home, now):
             "credits": credits_text(raw.get("credits")), "plan": plan_words(raw.get("plan_type"))}
 
 
-def ask_codex(codex_home, deadline):
-    """Codex's own answer for one account through `codex app-server` (JSON-RPC lines on stdio), which signs in with its
-    own login: {at, account: {email, plan} or None when signed out, limits, reset_credits}; None when codex is missing,
-    fails or is still quiet at `deadline`."""
+def codex_rpc(codex_home, requests, deadline):
+    """Codex's answers to `requests` (after initialize) through `codex app-server` (JSON-RPC lines on stdio) in one
+    account's folder, which signs in with its own login: {id: message} once every request with an id has answered;
+    None when codex is missing, fails or is still quiet at `deadline`."""
     program = shutil.which("codex")
     if not program:
         return None
@@ -439,14 +442,14 @@ def ask_codex(codex_home, deadline):
     except OSError:
         return None
     answers, buffer = {}, b""
+    wanted = {r["id"] for r in requests if "id" in r}
     try:
         requests = [{"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "pilot-ai-usage", "version": "3"}}},
-                    {"method": "initialized"}, {"id": 2, "method": "account/read", "params": {}},
-                    {"id": 3, "method": "account/rateLimits/read", "params": None}]
+                    {"method": "initialized"}] + requests
         proc.stdin.write("".join(json.dumps(r) + "\n" for r in requests).encode())
         proc.stdin.flush()
         out = proc.stdout.fileno()
-        while len(answers) < 2:
+        while len(answers) < len(wanted):
             left = deadline - time.monotonic()
             if left <= 0 or not select.select([out], [], [], left)[0]:
                 return None
@@ -460,13 +463,21 @@ def ask_codex(codex_home, deadline):
                     message = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(message, dict) and message.get("id") in (2, 3):
+                if isinstance(message, dict) and message.get("id") in wanted:
                     answers[message["id"]] = message
     except OSError:
         return None
     finally:
         proc.kill()
         proc.wait()
+    return answers
+
+
+def ask_codex(codex_home, deadline):
+    """Codex's own answer for one account: {at, account: {email, plan} or None when signed out, limits, reset_credits};
+    None when codex is missing, fails or is still quiet at `deadline`."""
+    answers = codex_rpc(codex_home, [{"id": 2, "method": "account/read", "params": {}},
+                                     {"id": 3, "method": "account/rateLimits/read", "params": None}], deadline) or {}
     account = (answers.get(2) or {}).get("result")
     limits = (answers.get(3) or {}).get("result")
     if not isinstance(account, dict):
@@ -512,6 +523,13 @@ def login_log(cache_dir, codex_home):
 def login_failed(cache_dir, codex_home):
     """Why the last sign-in in this folder ended without a login: Codex's last line, kept until the next try."""
     return os.path.join(cache_dir, "login-%s-failed.json" % home_key(codex_home))
+
+
+def redeem_path(data_dir, codex_home):
+    """A Redeem reset in a folder Codex has not said the outcome of: {key, at}. The next press retries it with the same
+    key, so Codex counts it as that attempt and never spends a second credit for it. Under paths.data, never the cache,
+    which may be purged and would lose the key."""
+    return os.path.join(data_dir, "redeem-%s.json" % home_key(codex_home))
 
 
 def unlink_quietly(*paths):
@@ -616,11 +634,10 @@ def answer_email(answer):
     return email.lower() if isinstance(email, str) and email else None
 
 
-def codex_accounts(home, now, run, ask_until=None, fresh=LIVE_FRESH):
-    """Every Codex account, asked ones first. `ask_until` (a monotonic deadline) asks Codex again for an answer over
-    `fresh` s old (30, a page's 120); without it an answer over 120 s old goes to one background refresh. Pilot's own
-    account signing in now or signed out is shown as such and never asked."""
-    cache_dir = (run.get("paths") or {}).get("cache")
+def listed_homes(home, run, cache_dir):
+    """codex_homes' four lists with other logins and other folders only while the `otherCodex` setting is on, then
+    Pilot's own accounts signing in now or signed out ({path: sign-in link or None}), shown as such and never asked,
+    then the folders Codex is asked in."""
     setting, own, logins, others = codex_homes(home, run)
     logins, others = (logins, others) if VIEW["otherCodex"] else ([], [])
     pending = {}
@@ -628,7 +645,15 @@ def codex_accounts(home, now, run, ask_until=None, fresh=LIVE_FRESH):
         link = signing_in(cache_dir, path)
         if link is not None or not signed_in(path):
             pending[path] = link
-    asked = setting + [p for p in own if p not in pending] + logins
+    return setting, own, logins, others, pending, setting + [p for p in own if p not in pending] + logins
+
+
+def codex_accounts(home, now, run, ask_until=None, fresh=LIVE_FRESH):
+    """Every Codex account, asked ones first. `ask_until` (a monotonic deadline) asks Codex again for an answer over
+    `fresh` s old (30, a page's 120); without it an answer over 120 s old goes to one background refresh. Pilot's own
+    account signing in now or signed out is shown as such and never asked."""
+    cache_dir = (run.get("paths") or {}).get("cache")
+    setting, own, logins, others, pending, asked = listed_homes(home, run, cache_dir)
     answers = {p: load_live(cache_dir, p) for p in asked}
     stale = [p for p in asked if not answers[p] or now - answers[p]["at"] > (fresh if ask_until else LIVE_STALE)]
     if stale and ask_until:
@@ -652,7 +677,7 @@ def codex_accounts(home, now, run, ask_until=None, fresh=LIVE_FRESH):
         if path in logins and email and email in known:
             continue  # the same account as a row above, found again in another folder
         label = "Pilot account" if path in own else "Pilot AI" if path == os.path.join(home, PILOT_AI_CODEX) else tilde(path, home)
-        provider.update(home=label, own=path if path in own else None, same=bool(email and email in known))
+        provider.update(home=label, own=path if path in own else None, path=path, same=bool(email and email in known))
         provider["name"] = provider.get("who") or provider["home"]
         provider["since"] = "update" if provider.get("source") == "live" else "run"
         if live or provider["state"] == "ok" or signed_in(path):
@@ -1106,6 +1131,18 @@ def account_buttons(codex, page):
     return [{"type": "buttons", "actions": actions}] if actions else []
 
 
+def redeem_button(codex):
+    """Redeem reset, on an account Codex says holds a limit reset credit: one is spent only after the confirm, whose
+    question fits the popover's two lines."""
+    found = codex.get("reset_credits")
+    if not found or found["count"] <= 0 or not codex.get("path"):
+        return []
+    ask = "Reset Codex's limits for %s now? It spends 1 of your %d reset credit%s." % (
+        codex["name"], found["count"], "" if found["count"] == 1 else "s")
+    return [{"type": "buttons", "actions": [{"type": "run", "command": "redeem-reset", "context": {"home": codex["path"]},
+                                             "title": "Redeem reset…", "ask": {"confirm": ask}}]}]
+
+
 def codex_card(codex, now, page=False):
     own = codex.get("own")
     if codex["state"] != "ok":
@@ -1116,6 +1153,7 @@ def codex_card(codex, now, page=False):
     credits = reset_credits_text(codex.get("reset_credits"), now)
     if credits:
         blocks.append({"type": "markdown", "text": credits})
+        blocks += redeem_button(codex)
     if codex["credits"] is not None:
         blocks.append({"type": "stats", "items": [{"label": "Credits", "value": codex["credits"]}]})
     if own and codex.get("same"):
@@ -1216,6 +1254,7 @@ def calm_codex(codex, now):
     credits = calm_credits(codex.get("reset_credits"), now)
     if credits:
         blocks.append(credits)
+        blocks += redeem_button(codex)
     if codex["credits"] is not None:
         blocks.append({"type": "stats", "items": [{"label": "Credits", "value": codex["credits"]}]})
     if own and codex.get("same"):
@@ -1522,6 +1561,80 @@ def remove_account(run):
     send({"type": "hud", "text": "Removed the Codex account from Pilot"})
 
 
+# What each of Codex's consume outcomes means, as Codex's own Redeem reset says it.
+REDEEMED = {"reset": "Codex usage reset", "nothingToReset": "Your Codex usage doesn't need a reset right now",
+            "noCredit": "That Codex account has no limit reset credits left",
+            "alreadyRedeemed": "That reset credit was already used"}
+
+
+def asked_account(run):
+    """The Codex folder a button named, when AI usage asks Codex in it now (codex_accounts' own filter: no other login
+    while List other Codex folders is off, no Pilot account signed out or signing in); None for any other."""
+    context = run.get("context") if isinstance(run.get("context"), dict) else {}
+    home = context.get("home")
+    asked = listed_homes(os.path.expanduser("~"), run, (run.get("paths") or {}).get("cache"))[-1]
+    return home if isinstance(home, str) and home in asked else None
+
+
+def redeem_reset(run):
+    """Redeem reset (asked first on its button): one limit reset credit spent on the account the button named, through
+    Codex's own `account/rateLimitResetCredit/consume`, the backend picking the credit. One idempotency key per press,
+    kept in paths.data until Codex says its outcome: a press after one Codex never answered (quiet, an error, or the
+    run stopped) retries that attempt with its key. Nothing is spent unless the key reads back from paths.data and the
+    account's lock is held (its cache folder). After a reset, or a credit already used, that account is asked again, so
+    its card shows it; the page asks again as the run ends."""
+    data_dir, cache_dir = run_paths(run)
+    if not data_dir or not cache_dir:
+        send({"type": "error", "text": "got no %s folder, so nothing was spent" % ("data" if not data_dir else "cache")})
+        return
+    home = asked_account(run)
+    if home is None:
+        send({"type": "hud", "text": "That Codex account is no longer in AI usage"})
+        return
+    if not shutil.which("codex"):
+        send({"type": "hud", "text": "Codex isn't installed on this Mac"})
+        return
+    lock = take_lock(cache_dir, lock_name(home))
+    if lock is None:
+        send({"type": "hud", "text": "Codex is busy with that account: try again in a moment"})
+        return
+    answer, outcome, left = {}, None, None
+    try:
+        unanswered = read_json(redeem_path(data_dir, home))
+        key = unanswered["key"] if isinstance(unanswered, dict) and isinstance(unanswered.get("key"), str) else str(uuid.uuid4())
+        # Kept before Codex is asked, so a run stopped mid-call retries this attempt too; write_json swallows a failed
+        # write, so the key is read back, and a key not on disk spends nothing.
+        write_json(redeem_path(data_dir, home), {"key": key, "at": time.time()})
+        if (read_json(redeem_path(data_dir, home)) or {}).get("key") != key:
+            send({"type": "error", "text": "could not save the reset's key in its data folder, so nothing was spent"})
+            return
+        answers = codex_rpc(home, [{"id": 2, "method": "account/rateLimitResetCredit/consume",
+                                    "params": {"idempotencyKey": key}}], time.monotonic() + REDEEM_WAIT)
+        answer = (answers or {}).get(2) or {}
+        outcome = (answer.get("result") or {}).get("outcome") if isinstance(answer.get("result"), dict) else None
+        if outcome in REDEEMED:
+            unlink_quietly(redeem_path(data_dir, home))  # its outcome is known: the next press is a new attempt
+        if outcome in ("reset", "alreadyRedeemed"):
+            fresh = ask_codex(home, START + 28)
+            if fresh:
+                write_json(live_path(cache_dir, home), fresh)
+                left = (fresh.get("reset_credits") or {}).get("count")
+            else:
+                unlink_quietly(live_path(cache_dir, home))  # the next look asks Codex again
+    finally:
+        if lock:
+            lock.close()
+    if outcome in REDEEMED:
+        more = " · %d reset credit%s left" % (left, "" if left == 1 else "s") if left is not None else ""
+        send({"type": "hud", "text": REDEEMED[outcome] + more})
+    elif isinstance(answer.get("error"), dict):
+        send({"type": "alert", "text": "Codex didn't redeem the reset", "sound": "Basso",
+              "note": str(answer["error"].get("message") or "Codex gave no reason.")[:200]})
+    else:
+        send({"type": "alert", "text": "Codex didn't answer about the reset", "sound": "Basso",
+              "note": "Redeem reset again retries this same attempt, so it can't spend a second credit."})
+
+
 def status_read(cache_dir, now):
     """The status pages' last read; one older than 5 minutes goes to a detached refresh."""
     data = read_json(os.path.join(cache_dir, STATUS_FILE)) if cache_dir else None
@@ -1610,7 +1723,7 @@ def background_codex(cache_dir, homes):
 
 
 COMMANDS = {"usage": show_usage, "summary": show_summary, "page": show_page, "bar": show_bar,
-            "add-account": add_account, "remove-account": remove_account, "refresh": refresh}
+            "add-account": add_account, "remove-account": remove_account, "refresh": refresh, "redeem-reset": redeem_reset}
 
 
 def main():

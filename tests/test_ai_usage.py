@@ -7,6 +7,7 @@ import signal
 import subprocess
 import time
 import unittest
+from unittest import mock
 
 from harness import EXTENSIONS, ExtensionTestCase
 
@@ -20,7 +21,10 @@ EMAIL, OTHER = "sven@example.com", "work@example.com"
 
 # A stand-in for `codex`, each call logged with its CODEX_HOME. `login` prints a sign-in link, waits for the file
 # `release-login` in CODEX_HOME (at most 20 s), then saves a stand-in login there; with `fail-login` there it fails at once; `logout` removes it. `app-server`: JSON-RPC
-# lines in, its answer from $CODEX_HOME/fake-codex.json (test-only); no such file is a codex that fails at once.
+# lines in, answered by method from $CODEX_HOME/fake-codex.json (test-only); no such file is a codex that fails at once.
+# `account/rateLimitResetCredit/consume` logs its params to $CODEX_HOME/consumed.jsonl and answers `consume` (a result or
+# {"error": …}, or {"silent": true}: it exits without answering); on "reset" the file's `limits` become its
+# `limits_after`. Nothing here ever reaches OpenAI.
 FAKE_CODEX = r'''
 import json, os, sys, time
 home = os.environ.get("CODEX_HOME", "")
@@ -51,13 +55,26 @@ for line in sys.stdin:
     message = json.loads(line)
     if "id" not in message:
         continue
-    result = {1: {"userAgent": "fake"}, 2: {"account": fake["account"], "requiresOpenaiAuth": True},
-              3: fake.get("limits")}[message["id"]]
+    method = message["method"]
+    if method == "account/rateLimitResetCredit/consume":
+        with open(os.path.join(home, "consumed.jsonl"), "a") as f:
+            f.write(json.dumps(message["params"]) + "\n")
+        answer = fake.get("consume", {"outcome": "noCredit"})
+        if answer.get("silent"):
+            sys.exit(0)
+        if answer.get("outcome") == "reset" and "limits_after" in fake:
+            with open(os.path.join(home, "fake-codex.json"), "w") as f:
+                json.dump(dict(fake, limits=fake["limits_after"]), f)
+        reply = {"error": answer["error"]} if "error" in answer else {"result": answer}
+        print(json.dumps(dict(reply, id=message["id"])), flush=True)
+        break
+    result = {"initialize": {"userAgent": "fake"}, "account/read": {"account": fake["account"], "requiresOpenaiAuth": True},
+              "account/rateLimits/read": fake.get("limits")}[method]
     if result is None:
         print(json.dumps({"id": message["id"], "error": {"code": -32600, "message": "not signed in"}}), flush=True)
     else:
         print(json.dumps({"id": message["id"], "result": result}), flush=True)
-    if message["id"] == 3:
+    if method == "account/rateLimits/read":
         break
 '''
 
@@ -255,6 +272,136 @@ class AIUsageTests(ExtensionTestCase):
                                      credits=((n + 19 * DAY, "available"), (n + 27 * DAY, "available"),
                                               (n + 9 * DAY, "redeemed"))))
 
+    def redeem(self, name, count, home=".codex"):
+        """The Redeem reset button a card with `count` reset credits carries."""
+        ask = "Reset Codex's limits for %s now? It spends 1 of your %d reset credit%s." % (name, count, "" if count == 1 else "s")
+        return {"type": "buttons", "actions": [{"type": "run", "command": "redeem-reset", "context": {"home": str(self.box.home / home)},
+                                                "title": "Redeem reset…", "ask": {"confirm": ask}}]}
+
+    def consumed(self, home=".codex"):
+        path = self.box.home / home / "consumed.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def test_redeem_reset_spends_one_credit_through_codex_then_asks_again(self):
+        """Redeem reset sends Codex's own consume with a fresh idempotency key and no credit id (the backend picks), then
+        asks the account again so its card and the HUD say what is left. Only the stand-in codex answers."""
+        self.sven_like()
+        n = self.now
+        fake = json.loads((self.box.home / ".codex" / "fake-codex.json").read_text())
+        after = codex_answer(EMAIL, "plus", live_window(0, 300, n + 300 * MIN), live_window(0, 10080, n + 7 * DAY),
+                             credits=((n + 27 * DAY, "available"), (n + 19 * DAY, "redeemed")))["limits"]
+        self.codex_says(dict(fake, consume={"outcome": "reset"}, limits_after=after))
+        r = self.run_account("redeem-reset", home=self.box.home / ".codex")
+        self.assertEqual([h["text"] for h in r.of_type("hud")], ["Codex usage reset · 1 reset credit left"])
+        (sent,) = self.consumed()
+        self.assertEqual(set(sent), {"idempotencyKey"}, "the backend picks the credit")
+        self.assertRegex(sent["idempotencyKey"], r"^[0-9a-f-]{36}$")
+        blocks = self.popover(home=self.box.home)
+        codex = card(blocks, "Codex")
+        self.assertIn({"type": "markdown", "text": "**Limit reset credits:** 1 available · expire "
+                       + time.strftime("%-d %b %H:%M", time.localtime(n + 27 * DAY))}, codex["blocks"],
+                      "the card shows the answer read after the reset")
+        self.assertEqual(codex["blocks"][0]["percent"], 100)
+        self.run_account("redeem-reset", home=self.box.home / ".codex")
+        self.assertEqual(len(self.consumed()), 2)
+        self.assertNotEqual(self.consumed()[0]["idempotencyKey"], self.consumed()[1]["idempotencyKey"],
+                            "each press is its own attempt")
+
+    def test_redeem_reset_says_each_of_codexs_answers_and_never_spends_on_an_unknown_folder(self):
+        self.sven_like()
+        fake = json.loads((self.box.home / ".codex" / "fake-codex.json").read_text())
+        for consume, kind, text in (({"outcome": "nothingToReset"}, "hud", "Your Codex usage doesn't need a reset right now"),
+                                    ({"outcome": "noCredit"}, "hud", "That Codex account has no limit reset credits left"),
+                                    ({"outcome": "alreadyRedeemed"}, "hud", "That reset credit was already used · 2 reset credits left"),
+                                    ({"error": {"code": -32600, "message": "chatgpt authentication required for rate limit reset credits"}},
+                                     "alert", "Codex didn't redeem the reset")):
+            self.codex_says(dict(fake, consume=consume))
+            r = self.run_account("redeem-reset", home=self.box.home / ".codex")
+            self.assertEqual([m["text"] for m in r.of_type(kind)], [text], consume)
+        self.assertEqual(r.of_type("alert")[0]["note"], "chatgpt authentication required for rate limit reset credits")
+        spent = len(self.consumed())
+        outside = self.box.home / "elsewhere"
+        outside.mkdir()
+        (outside / "fake-codex.json").write_text(json.dumps(dict(fake, consume={"outcome": "reset"})))
+        r = self.run_account("redeem-reset", home=outside)
+        self.assertEqual([h["text"] for h in r.of_type("hud")], ["That Codex account is no longer in AI usage"])
+        self.assertEqual((len(self.consumed()), self.consumed("elsewhere")), (spent, []), "a folder AI usage doesn't ask is never spent on")
+        self.assertEqual(len(self.run_account("redeem-reset").of_type("hud")), 1, "a press with no account names none")
+        self.assertEqual(len(self.consumed()), spent)
+
+    def test_a_redeem_codex_never_answered_is_retried_with_its_own_key(self):
+        """Codex quiet, an error, or the run stopped: the key stays in paths.data, so the next press is the same attempt
+        and can't spend a second credit; once Codex says the outcome, the press after is a new attempt."""
+        self.sven_like()
+        fake = json.loads((self.box.home / ".codex" / "fake-codex.json").read_text())
+        self.codex_says(dict(fake, consume={"silent": True}))
+        r = self.run_account("redeem-reset", home=self.box.home / ".codex")
+        self.assertEqual([a["text"] for a in r.of_type("alert")], ["Codex didn't answer about the reset"])
+        key = "redeem-%s.json" % hashlib.sha1(str(self.box.home / ".codex").encode()).hexdigest()[:12]
+        self.assertTrue((self.box.root / "data" / key).exists(), "the attempt's key is kept in paths.data")
+        self.assertFalse((self.box.cache / key).exists(), "never in the cache, which may be purged")
+        self.codex_says(dict(fake, consume={"error": {"code": -32603, "message": "rate limit reset consume timed out"}}))
+        self.assertEqual(len(self.run_account("redeem-reset", home=self.box.home / ".codex").of_type("alert")), 1)
+        self.codex_says(dict(fake, consume={"outcome": "reset"}))
+        self.assertEqual(len(self.run_account("redeem-reset", home=self.box.home / ".codex").of_type("hud")), 1)
+        self.run_account("redeem-reset", home=self.box.home / ".codex")
+        keys = [c["idempotencyKey"] for c in self.consumed()]
+        self.assertEqual(len(keys), 4)
+        self.assertEqual(keys[0], keys[1], "the retry after no answer reuses the attempt's key")
+        self.assertEqual(keys[1], keys[2], "an error says no outcome, so the next press is the same attempt again")
+        self.assertNotEqual(keys[2], keys[3], "once Codex said the outcome, the next press is a new attempt")
+        self.assertFalse((self.box.root / "data" / key).exists())
+
+    def test_redeem_spends_nothing_when_its_key_cant_be_kept(self):
+        """An unwritable data folder (write_json swallows the failure) or no cache folder (no lock): refused before
+        Codex is asked, so no credit can go without its key on disk."""
+        self.sven_like()
+        fake = json.loads((self.box.home / ".codex" / "fake-codex.json").read_text())
+        self.codex_says(dict(fake, consume={"outcome": "reset"}))
+        data = self.box.root / "data"
+        data.mkdir(parents=True, exist_ok=True)
+        data.chmod(0o500)
+        self.addCleanup(data.chmod, 0o700)
+        r = self.run_account("redeem-reset", home=self.box.home / ".codex")
+        self.assertEqual([e["text"] for e in r.of_type("error")],
+                         ["could not save the reset's key in its data folder, so nothing was spent"])
+        self.assertEqual((self.consumed(), self.codex_calls()), ([], []), "Codex is never asked")
+        data.chmod(0o700)
+        # No cache folder: called in-process with Codex's call replaced, so even a broken guard reaches no codex.
+        sent, asked = [], []
+        run = {"command": "redeem-reset", "context": {"home": str(self.box.home / ".codex")}, "paths": {"data": str(data)}}
+        with mock.patch.object(ai_usage, "send", sent.append), mock.patch.object(ai_usage, "codex_rpc", lambda *a: asked.append(a)):
+            ai_usage.redeem_reset(run)
+        self.assertEqual((sent, asked), ([{"type": "error", "text": "got no cache folder, so nothing was spent"}], []))
+
+    def test_redeem_only_on_an_account_ai_usage_asks_now(self):
+        """asked_account takes codex_accounts' own filter: another login only while List other Codex folders is on, a
+        Pilot account only once it is signed in and not signing in."""
+        self.sven_like()
+        fake = dict(json.loads((self.box.home / ".codex" / "fake-codex.json").read_text()), consume={"outcome": "reset"})
+        other = self.box.home / ".codex-work"
+        self.codex_says(fake, home=".codex-work")
+        (other / "auth.json").write_text(json.dumps({"bot": SECRET_SAMPLE}))
+        off = {"otherCodex": False}
+        r = self.run_account("redeem-reset", home=other, preferences=off)
+        self.assertEqual([h["text"] for h in r.of_type("hud")], ["That Codex account is no longer in AI usage"])
+        self.assertEqual(self.consumed(".codex-work"), [], "List other Codex folders off: never spent on")
+        self.run_account("redeem-reset", home=other)
+        self.assertEqual(len(self.consumed(".codex-work")), 1, "on, the same login is asked and redeems")
+        account = self.accounts_root() / "1"
+        account.mkdir(parents=True)
+        (account / "fake-codex.json").write_text(json.dumps(fake))
+        r = self.run_account("redeem-reset", home=account)
+        self.assertEqual([h["text"] for h in r.of_type("hud")], ["That Codex account is no longer in AI usage"])
+        self.assertFalse((account / "consumed.jsonl").exists(), "a Pilot account not signed in is never spent on")
+
+    def test_no_redeem_without_a_credit(self):
+        n = self.now
+        self.codex_says(codex_answer(EMAIL, "plus", live_window(11, 300, n + HOUR), live_window(13, 10080, n + DAY),
+                                     credits=((n + 9 * DAY, "redeemed"),)))
+        self.assertNotIn("redeem-reset", json.dumps(self.popover(home=self.box.home)))
+        self.assertNotIn("redeem-reset", json.dumps(self.popover(home=self.box.home, pilot=self.CALM)))
+
     def check_quiet(self, result):
         self.assertNotIn(SECRET_SAMPLE, result)
         return result
@@ -304,8 +451,9 @@ class AIUsageTests(ExtensionTestCase):
              "markTone": "fine", "resetsAt": n + 4 * DAY, "note": "30% in reserve · Lasts until reset · 1.5× headroom"}])
         day = lambda t: time.strftime("%-d %b %H:%M", time.localtime(t))
         self.assertEqual(codex["blocks"][2:], [{"type": "markdown", "text": "**Limit reset credits:** 2 available · expire "
-                                                "%s, %s" % (day(n + 19 * DAY), day(n + 27 * DAY))}],
-                         "a zero credit balance is left out, as CodexBar does")
+                                                "%s, %s" % (day(n + 19 * DAY), day(n + 27 * DAY))},
+                                               self.redeem(EMAIL, 2)],
+                         "a zero credit balance is left out, as CodexBar does; Redeem reset asks first")
         rows = blocks[-2]["items"]
         self.assertEqual([r["title"] for r in rows], ["Claude status", "Codex status", "Claude usage dashboard",
                                                       "Codex usage dashboard", "Add Codex account…"])
@@ -345,6 +493,7 @@ class AIUsageTests(ExtensionTestCase):
         self.assertEqual(codex["blocks"][2], {"type": "note", "icon": "reset", "text": "2 reset credits",
                                               "aside": "next expires " + time.strftime("%-d %b", time.localtime(n + 19 * DAY)),
                                               "help": "Expire %s, %s" % (day(n + 19 * DAY), day(n + 27 * DAY))})
+        self.assertEqual(codex["blocks"][3], self.redeem(EMAIL, 2), "the popover's card redeems too, asked first")
         row = blocks[-1]
         self.assertEqual([(i.get("title"), i.get("icon"), i.get("tone"), i.get("word"), i["help"]) for i in row["items"]], [
             ("Claude", None, "fine", None, "Claude status: All Systems Operational"),
