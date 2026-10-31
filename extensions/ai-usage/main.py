@@ -1398,8 +1398,15 @@ def show_usage(run):
         words, text = GEMINI_WORDS
         md += ["", "## Gemini", "**%s.** %s" % (words.capitalize(), text)]
     md += ["", "---", "", token_note(tokens), "", FOOTNOTE]
-    send({"type": "detail", "markdown": "\n".join(md) + "\n", "metadata": rows,
+    send({"type": "detail", "markdown": "\n".join(md) + "\n", "metadata": rows, "blocks": detail_cards(data),
           "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]})
+
+
+def detail_cards(data):
+    """The page's cards for the detail (Pilot 1.1, ADR 0010 amended 2026-10-30): drawn in place of its markdown, which
+    stays for a Pilot that ignores `blocks`. No buttons: a detail runs only its own actions, so Add or Remove would do
+    nothing there."""
+    return [dict(c, blocks=[b for b in c["blocks"] if b["type"] != "buttons"]) for c in cards(data)]
 
 
 def subtitle(*parts):

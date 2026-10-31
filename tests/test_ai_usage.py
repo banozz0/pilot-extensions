@@ -782,6 +782,9 @@ class AIUsageTests(ExtensionTestCase):
         self.assertIn("- **Limit reset credits:** 2 available", d["markdown"])
         self.assertNotIn("## Gemini", d["markdown"], "no gemini CLI, no Gemini")
         self.assertIn("Claude Code tokens: 1.2M in the last 7 days", d["markdown"])
+        # Pilot 1.1 draws the page's cards in place of the markdown; no buttons, which a detail would not run.
+        self.assertEqual([b["title"] for b in d["blocks"]], ["Claude", "Codex"])
+        self.assertNotIn("buttons", [x["type"] for b in d["blocks"] for x in b["blocks"]])
 
     def test_no_block_running_after_a_quiet_5_hours(self):
         self.write(self.projects / "p" / "s.jsonl", [claude_line(self.now - 6 * HOUR, "msg_1", read=4000)])
