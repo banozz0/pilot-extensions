@@ -310,14 +310,17 @@ def menu_row(todo, today, name, undo):
 
 def surface_row(todo, today, name):
     """A to-do in the popover or on the page: a click edits its text in its row (Sven, 2026-10-12: a click must never
-    tick it), the circle ticks it, ✕ deletes it, ⋯ lists the rest."""
+    tick it), the circle ticks it, 📅 asks its due day in the row (2026-10-31), ✕ deletes it, ⋯ lists the rest."""
     done = bool(todo.get("done"))
     every = actions(todo, today, name, menu=False)
     edit = next(a for a in every if a.get("command") == "edit")
     toggle, delete = every[0], every[-1]
     tick = dict(toggle, icon="checkmark.circle" if done else "circle")
+    inline = [tick]
+    if not done:
+        inline.append(dict(next(a for a in every if a.get("command") == "due"), icon="📅"))
     row = {"id": todo["id"], "title": todo["text"], "actions": [edit] + [a for a in every if a is not edit],
-           "inline": [tick, dict(delete, icon="xmark")]}
+           "inline": inline + [dict(delete, icon="xmark")]}
     tag = accessory(todo, today)
     if tag:
         row["accessory"] = tag

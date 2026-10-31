@@ -4,6 +4,10 @@
 Each session's folder, title and times come from the first 512 KB and the last 128 KB of its transcript, cached in
 paths.cache by file size and modification time, so the list stays fast however long a session ran. A title is the
 session's own AI title when it has one, else its first prompt cut to one short line; no more of any prompt is shown.
+
+The page (Sven, 2026-10-31: a page does its job in place) is a search box over the same sessions, newest first; a click
+copies the resume command, its inline buttons open the folder and copy the id. The box searches as Sven types: the
+hidden find command keeps its words in paths.data for SEARCH_FOR seconds, and the page reads them back.
 """
 import glob
 import json
@@ -17,6 +21,9 @@ LIMIT = 60
 HEAD, TAIL = 512 * 1024, 128 * 1024
 TITLE_LENGTH = 80
 COUNT_LIMIT = 64 * 1024 * 1024
+PAGE_ROWS = 30
+SEARCH = "search.json"  # in paths.data: the page's search words
+SEARCH_FOR = 600  # seconds the page's words count, so a page opened later starts unfiltered
 TAG = re.compile(r"<[^>]{1,200}>")
 COMMAND = re.compile(r"<command-name>\s*(.*?)\s*</command-name>", re.S)
 ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
@@ -190,7 +197,7 @@ def session_actions(meta, details=None):
     return actions
 
 
-def list_sessions(run):
+def session_rows(run):
     now = time.time()
     items = []
     for mtime, size, path, meta in metas((run.get("paths") or {}).get("cache")):
@@ -200,9 +207,71 @@ def list_sessions(run):
                       "icon": "🤖", "keywords": "%s %s %s" % (os.path.basename(meta.get("cwd") or ""),
                                                             meta.get("branch") or "", meta["id"]),
                       "actions": actions})
-    if not items:
-        items = [{"title": "No Claude Code sessions yet", "subtitle": "None in %s" % tilde(projects())}]
+    return items
+
+
+def list_sessions(run):
+    items = session_rows(run) or [{"title": "No Claude Code sessions yet", "subtitle": "None in %s" % tilde(projects())}]
     send({"type": "list", "items": items})
+
+
+def held_words(run):
+    """The page's search words while they are younger than SEARCH_FOR, else ""."""
+    try:
+        with open(os.path.join((run.get("paths") or {}).get("data") or "", SEARCH), encoding="utf-8") as f:
+            held = json.load(f)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(held, dict) or time.time() - (held.get("at") or 0) > SEARCH_FOR:
+        return ""
+    return held.get("query") if isinstance(held.get("query"), str) else ""
+
+
+def find(run):
+    """The page's box: its words kept for the page, an emptied box (or Clear) forgetting them. Quiet: the page shows."""
+    folder = (run.get("paths") or {}).get("data")
+    if not folder:
+        return
+    path = os.path.join(folder, SEARCH)
+    words = " ".join((run.get("input") or "").split())
+    if not words or (run.get("context") or {}).get("clear"):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+    os.makedirs(folder, exist_ok=True)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump({"query": words, "at": time.time()}, f)
+    os.replace(path + ".tmp", path)
+
+
+def page_row(item):
+    """A list row on the page: a click copies the resume command; Open folder and Copy session id as inline buttons.
+    Paste and Show details stay in Hyper+Space: pasted on the page it would land in Pilot's own window."""
+    by = {a["title"]: a for a in item["actions"]}
+    inline = [dict(by[t], icon=icon) for t, icon in (("Open folder", "📂"), ("Copy session id", "🆔")) if t in by]
+    return dict(item, actions=[by["Copy resume command"]], inline=inline)
+
+
+def page(run):
+    """The page: the search box, then the newest sessions matching its words (title, folder, branch or id)."""
+    words = held_words(run)
+    blocks = [{"type": "input", "placeholder": "Search sessions by title, folder, branch or id", "live": True,
+               "action": {"type": "run", "command": "find", "title": "Search"}}]
+    items = session_rows(run)
+    if words:
+        wanted = words.lower().split()
+        items = [i for i in items if all(w in " ".join((i["title"], i["subtitle"], i["keywords"])).lower() for w in wanted)]
+        blocks.append({"type": "buttons", "actions": [{"type": "run", "command": "find", "title": "Clear “%s”" % words,
+                                                       "context": {"clear": True}}]})
+    if items:
+        blocks.append({"type": "list", "title": "Sessions · click copies the resume command",
+                       "items": [page_row(i) for i in items[:PAGE_ROWS]]})
+    else:
+        blocks.append({"type": "markdown", "text": "No session matches “%s”." % words if words else
+                       "No Claude Code sessions yet in %s." % tilde(projects())})
+    send({"type": "blocks", "blocks": blocks})
 
 
 def counts(path, size):
@@ -269,6 +338,10 @@ def main():
         list_sessions(run)
     elif command == "session":
         show_session(run)
+    elif command == "page":
+        page(run)
+    elif command == "find":
+        find(run)
     else:
         send({"type": "error", "text": "has no command %s" % command})
 

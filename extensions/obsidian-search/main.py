@@ -9,6 +9,11 @@ modification time and size, so a later session matches them before its read is d
 read is finished waits for it up to ANSWER_BUDGET, then answers from what is read and says so; a query already
 superseded by a newer one is answered with the last list, unsearched. Note text leaves the program only inside list and detail messages; the cache
 holds paths, times and aliases, never a note's body.
+
+The page (Sven, 2026-10-31: a page does its job in place) is a search box over the same index, one process an ask: the
+recent notes while it is empty, else the matches, a click opening the note in Obsidian, its inline buttons copying the
+wikilink or the path and showing it in Finder. The box searches as Sven types: the hidden find command keeps its words
+in paths.data for SEARCH_FOR seconds (the words, never a note's text), and the page reads them back.
 """
 import collections
 import json
@@ -27,6 +32,9 @@ ANSWER_BUDGET = 1.2
 NOTE_BYTES, PREVIEW_BYTES = 1024 * 1024, 256 * 1024
 SNIPPET = 100
 PREVIEW_LINES, PREVIEW_CHARS = 150, 6000
+PAGE_BUDGET = 3.0  # of a page's 5 s, how long a search waits for the vault's read
+SEARCH = "search.json"  # in paths.data: the page's search words
+SEARCH_FOR = 600  # seconds the page's words count, so a page opened later starts unfiltered
 MARKUP = re.compile(r"^(?:#{1,6}\s+|[-*+]\s+\[[ xX]\]\s+|[-*+>]\s+|\d+[.)]\s+)+")
 
 
@@ -410,6 +418,69 @@ def serve(run, started):
         index.thread.join(0.3)  # let the cache write finish
 
 
+# The page
+
+def held_words(run):
+    """The page's search words while they are younger than SEARCH_FOR, else ""."""
+    try:
+        with open(os.path.join((run.get("paths") or {}).get("data") or "", SEARCH), encoding="utf-8") as f:
+            held = json.load(f)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(held, dict) or time.time() - (held.get("at") or 0) > SEARCH_FOR:
+        return ""
+    return held.get("query") if isinstance(held.get("query"), str) else ""
+
+
+def find(run):
+    """The page's box: its words kept for the page, an emptied box (or Clear) forgetting them. Quiet: the page shows."""
+    folder = (run.get("paths") or {}).get("data")
+    if not folder:
+        return
+    path = os.path.join(folder, SEARCH)
+    words = " ".join((run.get("input") or "").split())
+    if not words or (run.get("context") or {}).get("clear"):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+    os.makedirs(folder, exist_ok=True)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump({"query": words, "at": time.time()}, f)
+    os.replace(path + ".tmp", path)
+
+
+def page_row(item):
+    """A list row on the page: a click opens the note in Obsidian; Copy wikilink, Copy path and Reveal in Finder as
+    inline buttons. Show preview stays in Hyper+Space. A status row has no actions and stays as it is."""
+    by = {a["title"]: a for a in item.get("actions", [])}
+    if "Open in Obsidian" not in by:
+        return item
+    inline = [dict(by[t], icon=icon) for t, icon in (("Copy wikilink", "🔗"), ("Copy path", "📋"), ("Reveal in Finder", "📂"))]
+    return dict(item, actions=[by["Open in Obsidian"]], inline=inline)
+
+
+def page(run, started):
+    """The page: the search box, then the recent notes, or the notes matching its words."""
+    words = held_words(run)
+    blocks = [{"type": "input", "placeholder": "Search notes by title or by what they say", "live": True,
+               "action": {"type": "run", "command": "find", "title": "Search"}}]
+    vault, problem = find_vault(run)
+    if not vault:
+        blocks.append({"type": "markdown", "text": "Obsidian search %s." % problem})
+        send({"type": "blocks", "blocks": blocks})
+        return
+    if words:
+        blocks.append({"type": "buttons", "actions": [{"type": "run", "command": "find", "title": "Clear “%s”" % words,
+                                                       "context": {"clear": True}}]})
+    index = Index(vault, (run.get("paths") or {}).get("cache"))
+    items = search(index, words, started + PAGE_BUDGET)
+    title = "Matches in %s" % os.path.basename(vault) if words else "Recent in %s" % os.path.basename(vault)
+    blocks.append({"type": "list", "title": title, "items": [page_row(i) for i in items]})
+    send({"type": "blocks", "blocks": blocks})
+
+
 # Preview and reveal
 
 def note_from(run):
@@ -488,6 +559,10 @@ def main():
         show_note(run)
     elif command == "reveal":
         reveal(run)
+    elif command == "page":
+        page(run, started)
+    elif command == "find":
+        find(run)
     else:
         send({"type": "error", "text": "has no command %s" % command})
 

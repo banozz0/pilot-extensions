@@ -13,6 +13,9 @@ or more, or on Fetch all; never from the bar command, never on a timer. It runs 
 overlapping; the view asks again every 2 s until it ends. Pull is `git pull --ff-only`; push runs only when ahead of an
 upstream; anything harder (diverged, conflicts, commits) goes to lazygit, which a row opens in Pilot's terminal (Open in
 <terminal> when lazygit is not installed).
+
+The page (Sven, 2026-10-31: a page acts in place) adds a box that finds any repo as it is typed, clean ones too (its
+`find` run keeps the text in paths.cache/find.json), and a terminal button on each row beside Pull and Push.
 """
 import fcntl
 import functools
@@ -39,6 +42,8 @@ FETCH_TIMEOUT = 180
 SYNC_TIMEOUT = 25
 FETCHING_REFRESH = 2
 STATUS, FETCH_STATE, LOCK = "status.json", "fetch.json", "fetch.lock"
+FIND = "find.json"  # the page's search, as its box last ran it
+FIND_KEPT = 600  # a search older than this is forgotten, so a page opened later shows what needs you again
 GHOSTTY_ID = "com.mitchellh.ghostty"
 GHOSTTY = ["/Applications/Ghostty.app", os.path.expanduser("~/Applications/Ghostty.app")]
 BUNDLE = re.compile(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+\Z")
@@ -436,7 +441,25 @@ class View:
         self.clean = [r for r in self.repos if self.states[r] and not needs_you(self.states[r])]
 
     def row(self, repo):
-        return row(repo, self.root, self.states[repo], self.terminal_name, self.lazygit, self.page, self.now)
+        item = row(repo, self.root, self.states[repo], self.terminal_name, self.lazygit, self.page, self.now)
+        if self.page:  # its terminal at its right too, three buttons at most
+            shell = next(a for a in item["actions"] if a.get("command") == "open-terminal")
+            item["inline"] = (item.get("inline") or [])[:2] + [dict(shell, icon="terminal")]
+        return item
+
+    def search(self):
+        """The page's search when its box ran in the last FIND_KEPT s; "" for none."""
+        found = load(self.folder, FIND)
+        words = found.get("q") if isinstance(found.get("q"), str) else ""
+        return words if words and self.now - (found.get("at") or 0) < FIND_KEPT else ""
+
+    def matching(self, words):
+        """Every repo whose path from the folder or branch holds each word, needing you first."""
+        def text(r):
+            state = self.states[r] or {}
+            return ("%s %s" % (os.path.relpath(r, self.root), state.get("branch", ""))).lower()
+        hits = [r for r in self.repos if all(w in text(r) for w in words.lower().split())]
+        return sorted(hits, key=lambda r: not needs_you(self.states[r]))
 
     def fetch_note(self, running):
         if running:
@@ -466,6 +489,18 @@ class View:
                 {"label": "To push", "value": str(sum(1 for x in s if x["ahead"]))},
                 {"label": "To pull", "value": str(sum(1 for x in s if x["behind"]))},
                 {"label": "Clean", "value": str(len(self.clean)), "tone": "fine"}]})
+        words = self.search() if self.page else ""
+        if self.page:
+            blocks.append({"type": "input", "placeholder": "Find a repo by name or branch", "live": True,
+                           "action": {"type": "run", "command": "find", "title": "Find"}})
+        if words:
+            hits = [self.row(r) for r in self.matching(words)][:50]
+            blocks.append({"type": "list", "title": "Matching “%s” · %s" % (words, self.fetch_note(running)), "items": hits}
+                          if hits else {"type": "markdown", "text": "No repo in %s matches “%s”." % (tilde(self.root), words)})
+            blocks.append({"type": "buttons", "actions": [{"type": "run", "command": "find", "title": "Show what needs you"},
+                                                          {"type": "run", "command": "fetch", "title": "Fetch all",
+                                                           "icon": "refresh"}]})
+            return blocks
         items = [self.row(r) for r in self.attention + self.unread][:49]
         if self.clean:
             items.append({"title": "%s ›" % plural(len(self.clean), "clean repo"), "icon": "🌿",
@@ -503,6 +538,12 @@ def bar(run, started):
 
 def page(run, started):
     answer_blocks(View(run, started, "page"), stats=True)
+
+
+def find(run):
+    """The page box's run: keeps its text, trimmed (blank clears it), for the page's next ask."""
+    words = run.get("input") if isinstance(run.get("input"), str) else ""
+    save(cache_dir(run), FIND, {"q": " ".join(words.split())[:100], "at": time.time()})
 
 
 def clean(run, started):
@@ -685,6 +726,8 @@ def main():
         page(run, started)
     elif command == "clean":
         clean(run, started)
+    elif command == "find":
+        find(run)
     elif command == "fetch":
         fetch_all(run)
     elif command == "pull":

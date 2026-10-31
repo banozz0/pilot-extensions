@@ -201,11 +201,12 @@ class WeatherTests(ExtensionTestCase):
 
     def test_page_shows_the_glance_over_seven_days_then_24_hours_refresh_and_the_credit(self):
         blocks = self.page(preferences=self.VALLETTA, pilot=self.PILOT)
-        self.assertEqual([b["type"] for b in blocks], ["hero", "strip", "section", "buttons", "markdown"])
+        self.assertEqual([b["type"] for b in blocks], ["hero", "strip", "section", "section", "buttons", "markdown"])
         self.assertEqual(len(blocks[1]["items"]), 7)
         self.assertEqual(len(blocks[2]["blocks"][0]["items"]), 24)
-        self.assertEqual(blocks[3]["actions"][0]["command"], "refresh")
-        self.assertIn("Open-Meteo.com", blocks[4]["text"])
+        self.assertEqual(blocks[3]["title"], "Place")
+        self.assertEqual(blocks[4]["actions"][0]["command"], "refresh")
+        self.assertIn("Open-Meteo.com", blocks[5]["text"])
 
     def test_an_older_pilot_gets_todays_sections(self):
         for pilot in (None, self.OLDER, dict(self.OLDER, blocks="stats,meter,hero"), "hero,strip"):
@@ -279,6 +280,49 @@ class WeatherTests(ExtensionTestCase):
     def test_an_unknown_city_says_so(self):
         line = self.bar(preferences={"city": "Valletta, Narnia"})
         self.assertEqual(line["blocks"][0]["text"], "No weather yet: Open-Meteo knows no place called Valletta, Narnia.")
+
+    # ---- the page's place (Sven, 2026-10-31: pick a city on the page) ----
+
+    def place(self, **kwargs):
+        return self.sections(self.page(**kwargs))["Place"]
+
+    def test_the_page_searches_a_city_as_typed_and_a_row_picks_it_for_every_view(self):
+        place = self.place(preferences=self.VALLETTA, pilot=self.PILOT)
+        self.assertEqual(place["subtitle"], "Valletta, Malta · from Settings")
+        box = place["blocks"][0]
+        self.assertEqual((box["type"], box["live"], box["action"]["command"]), ("input", True, "find-place"))
+        self.run_ext("find-place", input="paris", preferences=self.VALLETTA)
+        self.assertEqual(self.calls()[-1][1]["name"], "paris")
+        rows = self.place(preferences=self.VALLETTA, pilot=self.PILOT)["blocks"][1]["items"]
+        self.assertEqual([(r["title"], r["subtitle"]) for r in rows][:3],
+                         [("Valletta", "Valletta · Malta"), ("Paris", "Texas · United States"), ("Paris", "Île-de-France · France")])
+        france = rows[2]["actions"][0]
+        self.assertEqual(france["command"], "pick-place")
+        said = self.run_ext("pick-place", context=france["context"], preferences=self.VALLETTA)
+        self.assertEqual(said.of_type("hud")[0]["text"], "Weather: Paris, France")
+        asked = len(self.calls())
+        place = self.place(preferences=self.VALLETTA, pilot=self.PILOT)
+        self.assertEqual(place["subtitle"], "Paris, France · picked here")
+        self.assertEqual(self.calls()[asked][1]["latitude"], "48.853", "the forecast asked for the place picked, no lookup")
+        self.assertEqual(len(place["blocks"]), 2, "the search closed; Use the City setting offered")
+        self.assertEqual(place["blocks"][1]["actions"][0]["context"], {"clear": True})
+
+    def test_an_edited_city_setting_wins_over_a_pick_and_use_the_city_setting_forgets_it(self):
+        self.run_ext("pick-place", context={"place": {"name": "Paris", "country": "France", "latitude": 48.853,
+                                                      "longitude": 2.349}}, preferences=self.VALLETTA)
+        self.assertEqual(self.place(preferences=self.VALLETTA)["subtitle"].split(" · ")[1], "picked here")
+        self.assertEqual(self.place(preferences={"city": "Paris, France"})["subtitle"].split(" · ")[1], "from Settings")
+        self.run_ext("pick-place", context={"clear": True}, preferences=self.VALLETTA)
+        self.assertEqual(self.place(preferences=self.VALLETTA)["subtitle"], "Valletta, Malta · from Settings")
+
+    def test_an_emptied_place_box_closes_the_search_and_offline_says_why(self):
+        self.fake_curl(fail="(6) Could not resolve host: geocoding-api.open-meteo.com")
+        result = self.box.run(self.EXTENSION, "find-place", input="rome", preferences=self.VALLETTA)
+        self.assertEqual(result.of_type("error")[0]["text"], "(6) Could not resolve host: geocoding-api.open-meteo.com")
+        rows = self.place(preferences=self.VALLETTA)["blocks"][1]["items"]
+        self.assertEqual(rows[0]["title"], "(6) Could not resolve host: geocoding-api.open-meteo.com")
+        self.run_ext("find-place", input="", preferences=self.VALLETTA)
+        self.assertEqual(len(self.place(preferences=self.VALLETTA)["blocks"]), 1)
 
     @unittest.skipIf(ZONE.startswith("Etc/") or "/" not in ZONE, "this Mac's time zone names no city")
     def test_no_city_uses_the_mac_time_zone_city(self):

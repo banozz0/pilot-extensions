@@ -96,3 +96,35 @@ class SSHHostsTests(ExtensionTestCase):
         rows = self.hosts()
         self.assertIn("looped", rows)
         self.assertLess(self.box.run(self.EXTENSION, "hosts", home=self.box.home).elapsed, 2)
+
+    # The page does its job in place (Sven, 2026-10-31): a box narrows the hosts as Sven types, a click connects.
+
+    def test_the_page_lists_every_host_under_a_live_box_each_connecting_inline(self):
+        blocks = self.page(home=self.box.home)
+        self.assertEqual(blocks[0]["type"], "input")
+        self.assertTrue(blocks[0]["live"])
+        self.assertEqual(blocks[0]["action"]["command"], "filter")
+        rows = blocks[1]["items"]
+        self.assertEqual(blocks[1]["title"], "Hosts")
+        self.assertEqual([r["title"] for r in rows], ["gitbox", "mac", "prod", "prod-alias"])
+        self.assertEqual(rows[2]["inline"], [dict(rows[2]["actions"][0], icon="terminal")])
+        self.assertEqual(rows[2]["actions"][0]["context"], {"host": "prod"})
+
+    def test_typed_words_narrow_the_page_and_show_all_clears_them(self):
+        self.run_ext("filter", input="deploy", home=self.box.home)
+        blocks = self.page(home=self.box.home)
+        self.assertEqual(blocks[1]["actions"][0]["title"], "Show all hosts")
+        self.assertEqual(blocks[2]["title"], "1 host matching “deploy”")
+        self.assertEqual([r["title"] for r in blocks[2]["items"]], ["prod-alias"])  # prod's User is overridden
+        self.run_ext("filter", input="nothing-like-it", home=self.box.home)
+        self.assertEqual(self.page(home=self.box.home)[2]["items"][0]["title"], "No host matches “nothing-like-it”")
+        self.run_ext("filter", home=self.box.home)
+        self.assertEqual(len(self.page(home=self.box.home)[1]["items"]), 4)
+
+    def test_a_click_on_the_page_connects_in_place(self):
+        ghostty = self.box.root / "Ghostty.app"
+        ghostty.mkdir()
+        row = self.page(home=self.box.home, preferences={"terminal": str(ghostty)})[1]["items"][1]
+        r = self.run_ext("connect", context=row["actions"][0]["context"], preferences={"terminal": str(ghostty)}, home=self.box.home)
+        self.assertEqual(r.of_type("hud"), [{"type": "hud", "text": "ssh mac in Ghostty"}])
+        self.assertEqual(self.box.shim_calls(), ["open -na %s --args --command=ssh mac --window-save-state=never" % ghostty])

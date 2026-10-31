@@ -413,6 +413,7 @@ def show(run, command):
 # ---- surfaces (Pilot story 161): the page and the top-bar item ----
 
 BAR_FRESH = 600  # the bar item asks GitHub at most every ten minutes; the page and lists keep FRESH
+PAGE_REFRESHING = 3  # a page asks again this often while a refresh runs
 
 
 def counts(cache, wanted, now):
@@ -426,8 +427,10 @@ def page(run):
     if not cache.get("fetched"):
         text = ("Could not reach GitHub: %s" % cache["error"]) if cache.get("error") and not running else \
             "Fetching from GitHub… this page asks again on its own."
-        send({"type": "blocks", "blocks": [{"type": "markdown", "text": text},
-                                           {"type": "buttons", "actions": [REFRESH]}]})
+        answer = {"type": "blocks", "blocks": [{"type": "markdown", "text": text}, {"type": "buttons", "actions": [REFRESH]}]}
+        if running:
+            answer["refresh"] = PAGE_REFRESHING
+        send(answer)
         return
     waiting, mine, runs, issues = counts(cache, wanted, now)
     blocks = [{"type": "stats", "items": [
@@ -438,7 +441,10 @@ def page(run):
     for title, items in (("Waiting on your review", waiting), ("Your pull requests", mine),
                          ("Failing CI runs this week", runs), ("Issues assigned to you", issues)):
         if items:
-            blocks.append({"type": "list", "title": title, "items": items[:20]})
+            blocks.append({"type": "list", "title": title, "items": [inline(i) for i in items[:20]]})
+    if not (waiting or mine or runs or issues):
+        blocks.append({"type": "markdown", "text": "Nothing on GitHub needs you: %s." % "; ".join(
+            empty for _, empty in SECTIONS.values())})
     note = "Updated %s" % ago(now - cache["fetched"])
     if running:
         note += ", refreshing now"
@@ -446,7 +452,22 @@ def page(run):
         note += ". Could not refresh: %s" % cache["error"]
     blocks.append({"type": "markdown", "text": note + "."})
     blocks.append({"type": "buttons", "actions": [REFRESH]})
-    send({"type": "blocks", "blocks": blocks})
+    answer = {"type": "blocks", "blocks": blocks}
+    if running:
+        answer["refresh"] = PAGE_REFRESHING  # the newest shows as soon as the refresh lands
+    send(answer)
+
+
+def inline(item):
+    """A page row with its doing at its right (Surfaces v2): a failed run's Re-run failed jobs, a pull request's checks;
+    each also in its actions, where an older Pilot reaches it through ⋯."""
+    wanted = {"rerun": ("refresh", "Re-run failed jobs"), "/checks": ("✅", "Open checks")}
+    buttons = []
+    for action in item["actions"]:
+        key = action.get("command") if action["type"] == "run" else "/checks" if action.get("url", "").endswith("/checks") else None
+        if key in wanted:
+            buttons.append(dict(action, icon=wanted[key][0]))
+    return dict(item, inline=buttons) if buttons else item
 
 
 def bar(run):
@@ -473,7 +494,7 @@ def only_preference(run):
 
 def refresh(run):
     if start_refresh(cache_dir(run), only_preference(run)):
-        send({"type": "hud", "text": "Refreshing from GitHub; open the list again in a few seconds"})
+        send({"type": "hud", "text": "Refreshing from GitHub; its page shows the newest in a few seconds"})
     else:
         send({"type": "error", "text": "could not start a refresh"})
 

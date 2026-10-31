@@ -233,13 +233,17 @@ class GhostexTests(ExtensionTestCase):
         self.assertEqual(rows["Needs an answer"]["badges"], [{"text": "needs you", "tone": "warn"}, {"text": "testing"}])
         self.assertEqual(rows["Parked"]["badges"], [{"text": "asleep"}, {"text": "done"}])
         self.assertEqual(rows["Busy build"]["subtitle"], "Claude · just now")
-        self.assertEqual([(a["title"], a["icon"]) for a in rows["Idle one"]["inline"]], [("Reply", "bubble"), ("Sleep", "moon")])
-        self.assertEqual([(a["title"], a["icon"]) for a in rows["Parked"]["inline"]], [("Reply", "bubble"), ("Wake", "sun")])
+        self.assertEqual([(a["title"], a["icon"]) for a in rows["Idle one"]["inline"]],
+                         [("Reply", "bubble"), ("Sleep", "moon"), ("Close…", "xmark")])
+        self.assertEqual([(a["title"], a["icon"]) for a in rows["Parked"]["inline"]],
+                         [("Reply", "bubble"), ("Wake", "sun"), ("Close…", "xmark")])
+        self.assertEqual(rows["Idle one"]["inline"][2]["ask"], {"confirm": "Close Idle one? Its terminal ends."})
         self.assertEqual([a["title"] for a in rows["Idle one"]["actions"]],
                          ["Reply", "Rename…", "Tag", "Sleep", "Open in Ghostex", "Close…"])
         self.assertEqual([a["title"] for a in rows["old-terminal"]["actions"]],
                          ["Reply", "Rename…", "Tag", "Open in Ghostex", "Close…"])
-        self.assertEqual(rows["old-terminal"]["inline"], [rows["old-terminal"]["actions"][0]])
+        # No sleep or wake for a terminal Ghostex can't act on: Rename takes its place.
+        self.assertEqual([a["title"] for a in rows["old-terminal"]["inline"]], ["Reply", "Rename…", "Close…"])
         for item in rows.values():
             for button in item["inline"]:
                 self.assertIn(button, item["actions"])  # an older Pilot reaches every inline through ⋯

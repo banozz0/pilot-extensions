@@ -69,3 +69,41 @@ class PortsTests(ExtensionTestCase):
         r = self.run_ext("kill", context={"pid": proc.pid, "port": port + 1 if port < 65535 else port - 1, "signal": "KILL"})
         self.assertIn("no longer held", r.of_type("error")[0]["text"])
         self.assertIsNone(proc.poll(), "the listener must still run")
+
+
+# lsof's -F pcn answer for two listeners; its -t check (a quit's) answers nothing, so no pid is ever signalled.
+LSOF = r'''case "$*" in *" -t "*) exit 1;; esac
+printf 'p4242\ncnode\nn*:3000\nn[::1]:3000\np4343\ncpython3\nn127.0.0.1:8000\n'
+'''
+
+
+class PortsPageTests(ExtensionTestCase):
+    """The page does its job in place (Sven, 2026-10-31): each port a row, Quit asking first in it. lsof and ps are shims."""
+    EXTENSION = "ports"
+
+    def setUp(self):
+        super().setUp()
+        self.box.shim("lsof", LSOF)
+        self.box.shim("ps", "echo /usr/local/bin/node")
+
+    def test_each_port_is_a_row_whose_quits_ask_first(self):
+        blocks = self.page()
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["title"], "Listening · 2 ports")
+        rows = blocks[0]["items"]
+        self.assertEqual([r["title"] for r in rows], ["Port 3000", "Port 8000"])
+        quit_, force = rows[0]["actions"][:2]
+        self.assertEqual(quit_["ask"], {"confirm": "Quit node on port 3000?"})
+        self.assertTrue(quit_["destructive"] and force["destructive"])
+        self.assertEqual(force["context"], {"pid": 4242, "port": 3000, "name": "node", "signal": "KILL"})
+        self.assertEqual(rows[0]["inline"], [dict(quit_, icon="xmark")])
+        self.assertEqual(rows[0]["subtitle"], "node · pid 4242 · *, [::1]")
+
+    def test_a_quit_from_the_page_checks_the_port_again_before_any_signal(self):
+        row = self.page()[0]["items"][0]
+        r = self.run_ext("kill", context=row["inline"][0]["context"])
+        self.assertEqual(r.of_type("error"), [{"type": "error", "text": "port 3000 is no longer held by pid 4242"}])
+
+    def test_nothing_listening_says_so(self):
+        self.box.shim("lsof", "exit 1")
+        self.assertEqual(self.page()[0]["items"][0]["title"], "No TCP port is listening")

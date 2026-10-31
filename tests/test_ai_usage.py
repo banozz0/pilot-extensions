@@ -765,9 +765,22 @@ class AIUsageTests(ExtensionTestCase):
         self.assertEqual(blocks[4]["text"], "Claude Code tokens: 1.2M in the last 7 days, 1.2M in this 5-hour block. "
                                             "They come from Claude Code's own logs and aren't your limit. Codex's numbers "
                                             "come from Codex itself. Pilot reads no sign-in tokens.")
-        self.assertEqual(blocks[5]["actions"][0]["text"], "Claude: Session 90% left, Weekly 10% left, Fable weekly 100% "
+        self.assertEqual(blocks[5]["actions"][0], {"type": "run", "command": "refresh", "title": "Refresh now", "icon": "refresh"})
+        self.assertEqual(blocks[5]["actions"][1]["text"], "Claude: Session 90% left, Weekly 10% left, Fable weekly 100% "
                                                           "left · Codex: Session 89% left, Weekly 87% left")
         self.check_quiet(json.dumps(blocks))
+
+    def test_refresh_now_on_the_page_asks_codex_again_however_fresh_its_answer(self):
+        self.sven_like()
+        self.claude_fixture()
+        self.page(home=self.box.home)
+        self.page(home=self.box.home)
+        self.assertEqual(len(self.codex_calls()), 1, "the page itself keeps an answer under 120 s")
+        r = self.run_ext("refresh", home=self.box.home)
+        self.check_quiet(r.stdout)
+        self.assertEqual(len(self.codex_calls()), 2)
+        self.assertEqual(r.of_type("hud")[0]["text"], "AI usage refreshed: Claude: Session 90% left, Weekly 10% left, "
+                                                      "Fable weekly 100% left · Codex: Session 89% left, Weekly 87% left")
 
     def test_detail_names_every_provider(self):
         self.sven_like()

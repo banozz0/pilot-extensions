@@ -83,6 +83,7 @@ TOKENS_FRESH = 300  # a page counts Claude Code tokens again only when its last 
 TOKENS_FILE = "claude-tokens.json"
 LIVE_WAIT = 3.0  # seconds a popover waits for Codex; a page waits 2 s, leaving time to count Claude Code tokens
 PAGE_WAIT = 2.0
+REFRESH_WAIT = 10.0  # seconds Refresh now waits for Codex; a no-view command has 30
 CODEX_TAILS = (256 * 1024, 4 * 1024 * 1024, 32 * 1024 * 1024)
 ACCOUNTS = "codex-accounts"  # Pilot's own Codex accounts, one CODEX_HOME each, under paths.data
 LOGIN_WAIT = 900  # seconds a `codex login` may wait for the browser
@@ -1352,8 +1353,18 @@ def show_page(run):
     tokens = claude_tokens(run, data["now"], START + PAGE_SCAN, reuse=TOKENS_FRESH)
     send(blocks_answer(data, cards(data, page=True) + [links(data),
         {"type": "markdown", "text": token_note(tokens) + " " + FOOTNOTE},
-        {"type": "buttons", "actions": [{"type": "copy", "text": summary_line(data), "title": "Copy summary"}]}],
+        {"type": "buttons", "actions": [{"type": "run", "command": "refresh", "title": "Refresh now", "icon": "refresh"},
+                                        {"type": "copy", "text": summary_line(data), "title": "Copy summary"}]}],
         PAGE_SIGNING_IN_REFRESH))
+
+
+def refresh(run):
+    """The page's Refresh now: every Codex account asked again whatever its answer's age, and Claude Code's tokens counted
+    again from its logs; the page asks again as the run ends, so it draws what this read."""
+    now = time.time()
+    data = limits(run, now, ask_until=START + REFRESH_WAIT, fresh=0)
+    claude_tokens(run, now, START + REFRESH_WAIT + PAGE_SCAN)
+    send({"type": "hud", "text": "AI usage refreshed: %s" % summary_line(data)})
 
 
 def bar(fraction):
@@ -1599,7 +1610,7 @@ def background_codex(cache_dir, homes):
 
 
 COMMANDS = {"usage": show_usage, "summary": show_summary, "page": show_page, "bar": show_bar,
-            "add-account": add_account, "remove-account": remove_account}
+            "add-account": add_account, "remove-account": remove_account, "refresh": refresh}
 
 
 def main():

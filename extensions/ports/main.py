@@ -4,6 +4,9 @@
 Kill port lists one row per program and port; its Quit and Force quit run the hidden `kill` command with the pid and
 port as context, which checks again that the pid still holds the port before signalling it. Never pid 1 or below,
 never this program, never Pilot (this program's parent, or a process named Pilot).
+
+Its page (Sven, 2026-10-31: a page does its job in place) lists the same rows, each with a Quit button that asks first in
+its row, and Force quit, Open and the copies on its ⋯ menu; the page asks lsof again after a quit and every 10 s.
 """
 import json
 import os
@@ -72,17 +75,37 @@ def item(row):
     }
 
 
+NONE = {"title": "No TCP port is listening", "subtitle": "Nothing of yours holds one", "icon": "🔌"}
+
+
 def kill_port():
     try:
         rows = listening()
     except RuntimeError as e:
         send({"type": "error", "text": str(e)})
         return
-    if not rows:
-        send({"type": "list", "items": [{"title": "No TCP port is listening", "subtitle": "Nothing of yours holds one",
-                                         "icon": "🔌"}]})
+    send({"type": "list", "items": [item(r) for r in rows] or [NONE]})
+
+
+def page_item(row):
+    """A page's row: Hyper+Space's, its two quits asking first in the row, Quit also an inline button."""
+    found = item(row)
+    name = row["name"] or "unknown"
+    for action, words in zip(found["actions"][:2], ("Quit %s on port %d?", "Force quit %s on port %d? It loses unsaved work.")):
+        action["ask"] = {"confirm": words % (name, row["port"])}
+        action["destructive"] = True
+    found["inline"] = [dict(found["actions"][0], icon="xmark")]
+    return found
+
+
+def page():
+    try:
+        rows = listening()
+    except RuntimeError as e:
+        send({"type": "error", "text": str(e)})
         return
-    send({"type": "list", "items": [item(r) for r in rows]})
+    title = "Listening · %d port%s" % (len(rows), "" if len(rows) == 1 else "s")
+    send({"type": "blocks", "blocks": [{"type": "list", "title": title, "items": [page_item(r) for r in rows] or [NONE]}]})
 
 
 def process_name(pid):
@@ -141,6 +164,8 @@ def main():
     command = run.get("command")
     if command == "kill-port":
         kill_port()
+    elif command == "page":
+        page()
     elif command == "kill":
         kill(run.get("context") if isinstance(run.get("context"), dict) else {})
     else:

@@ -110,3 +110,31 @@ class ClaudeSessionsTests(ExtensionTestCase):
         outside.write_text("{}\n")
         r = self.run_ext("session", home=self.box.home, context={"file": str(outside)})
         self.assertEqual(r.of_type("error"), [{"type": "error", "text": "that session is gone"}])
+
+    def test_the_page_searches_sessions_as_typed_and_a_click_copies_the_resume_command(self):
+        self.session("aaa", [self.user("Fix the login bug please"), {"type": "ai-title", "aiTitle": "Login bug fix"}],
+                     age=7200)
+        self.session("bbb", [self.user("Draw the widget page " + "y" * 70 + SECRET_TAIL)], project="-Users-x-other", age=60)
+        result = self.run_ext("page", surface="page")
+        self.assertNotIn(SECRET_TAIL, result.stdout)
+        blocks = self.page()
+        self.assertEqual(blocks[0]["type"], "input")
+        self.assertTrue(blocks[0]["live"])
+        rows = blocks[1]["items"]
+        self.assertEqual([r["id"] for r in rows], ["bbb", "aaa"])
+        self.assertEqual(rows[1]["actions"], [{"type": "copy", "text": "cd '%s' && claude --resume aaa" % self.work,
+                                               "title": "Copy resume command"}])
+        self.assertEqual([(a["type"], a["icon"]) for a in rows[1]["inline"]], [("open", "📂"), ("copy", "🆔")])
+
+        self.run_ext("find", input="login")
+        blocks = self.page()
+        self.assertEqual(blocks[1]["actions"][0], {"type": "run", "command": "find", "title": "Clear “login”",
+                                                   "context": {"clear": True}})
+        self.assertEqual([r["id"] for r in blocks[2]["items"]], ["aaa"])
+        self.run_ext("find", input="nope")
+        self.assertEqual(self.page()[-1], {"type": "markdown", "text": "No session matches “nope”."})
+        self.run_ext("find", input="x", context={"clear": True})
+        self.assertEqual(len(self.page()), 2)
+
+    def test_the_page_with_no_sessions_says_so(self):
+        self.assertIn("No Claude Code sessions yet", self.page()[-1]["text"])

@@ -182,6 +182,24 @@ class GithubTests(ExtensionTestCase):
         self.assertEqual(lists[0][1], ["Please look"])
         self.assertEqual(blocks[-1], {"type": "buttons", "actions": [{"type": "run", "command": "refresh", "title": "Refresh now"}]})
 
+    def test_page_rows_act_in_place_and_the_page_follows_a_refresh(self):
+        self.assertEqual(self.blocks_message("page", "page")["refresh"], 3, "fetching: the page asks again on its own")
+        self.wait_refresh()
+        answer = self.blocks_message("page", "page")
+        self.assertNotIn("refresh", answer, "nothing running: the page keeps its own pace")
+        rows = {i["title"]: i for b in answer["blocks"] if b["type"] == "list" for i in b["items"]}
+        rerun = rows["Nightly timed out on dev"]["inline"]
+        self.assertEqual([(a["command"], a["icon"]) for a in rerun], [("rerun", "refresh")])
+        self.assertEqual(rerun[0]["context"], {"repo": "x/c", "id": "31", "workflow": "Nightly"})
+        checks = rows["Add the thing"]["inline"]
+        self.assertEqual(checks, [{"type": "open", "url": "https://github.com/o/a/pull/7/checks", "title": "Open checks",
+                                   "icon": "✅"}])
+        self.assertNotIn("inline", rows["It breaks"])  # an issue opens on a click
+        r = self.run_ext("rerun", context=rerun[0]["context"])
+        self.assertEqual(r.of_type("hud")[0]["text"], "Re-running the failed jobs of Nightly")
+        self.assertIn("gh run rerun 31 --failed --repo x/c", self.gh_calls())
+        self.assertFalse([i for i in self.items("ci-runs") if "inline" in i], "Hyper+Space's lists stay as they were")
+
     def test_bar_is_quiet_until_something_needs_you_then_red_ci_first(self):
         self.assertEqual(self.bar()["text"], "", "nothing fetched yet: the item hides")
         self.wait_refresh()

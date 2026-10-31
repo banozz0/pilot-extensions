@@ -1,3 +1,4 @@
+import json
 import time
 
 from harness import ExtensionTestCase
@@ -111,3 +112,34 @@ class EasyCdTests(ExtensionTestCase):
         self.assertEqual(r.of_type("error"), [{"type": "error", "text": "no such app"}])
         r = self.run_ext("open-terminal", context={"path": str(self.box.home / "gone")})
         self.assertEqual(r.of_type("error"), [{"type": "error", "text": "got no folder that exists"}])
+
+    def test_the_page_searches_its_folders_as_typed_and_a_click_opens_a_terminal(self):
+        self.store(pins=[self.pilot, self.code], visits=[(30, self.notes), (60, self.music)])
+        blocks = self.page()
+        self.assertEqual(blocks[0]["type"], "input")
+        self.assertTrue(blocks[0]["live"])
+        self.assertEqual(blocks[0]["action"]["command"], "find")
+        self.assertEqual([b.get("title") for b in blocks[1:]], ["Pinned", "Recent"])
+        first = blocks[1]["items"][0]
+        self.assertEqual([(a["command"], a["context"]) for a in first["actions"]], [("open-terminal", {"path": self.pilot})])
+        self.assertEqual([a["icon"] for a in first["inline"]], ["📂", "📋"])
+
+        self.run_ext("find", input="  mus ")
+        blocks = self.page()
+        self.assertEqual(blocks[1]["actions"][0]["title"], "Clear “mus”")
+        self.assertEqual([b.get("title") for b in blocks[2:]], ["Recent"])
+        self.assertEqual([i["id"] for i in blocks[2]["items"]], [self.music])
+
+        self.run_ext("find", input="nothing-like-it")
+        self.assertEqual(self.page()[-1], {"type": "markdown", "text": "No folder matches “nothing-like-it”."})
+        self.run_ext("find", input="")  # the box emptied: every folder again
+        self.assertEqual(len(self.page()), 3)
+
+    def test_the_page_forgets_old_words_and_says_when_easy_cd_has_nothing(self):
+        self.run_ext("find", input="pil")
+        search = self.box.data / "search.json"
+        held = json.loads(search.read_text())
+        search.write_text(json.dumps(dict(held, at=held["at"] - 700)))
+        blocks = self.page()
+        self.assertEqual(len(blocks), 2)
+        self.assertIn("easy-cd has no pins or recent folders yet", blocks[1]["text"])

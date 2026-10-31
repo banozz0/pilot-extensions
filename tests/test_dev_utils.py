@@ -104,3 +104,42 @@ class DevUtilsTests(ExtensionTestCase):
         self.assertEqual(copy["type"], "copy")
         self.assertTrue(re.match(r"[0-9a-f-]{36}\Z", copy["text"]))
         self.assertEqual(hud, {"type": "hud", "text": "Copied " + copy["text"]})
+
+    def test_the_page_transforms_typed_text_and_a_click_copies_the_result(self):
+        blocks = self.page()
+        self.assertEqual(blocks[0]["type"], "input")
+        self.assertEqual(blocks[0]["action"]["command"], "use")
+        self.assertEqual([a["title"] for a in blocks[1]["actions"]], ["Use clipboard", "Copy new UUID"])
+        self.assertEqual(blocks[2]["type"], "markdown")
+
+        self.run_ext("use", input='{"b": 1, "a": [2]}')
+        blocks = self.page()
+        self.assertEqual([a["title"] for a in blocks[1]["actions"]], ["Use clipboard", "Copy new UUID", "Clear"])
+        rows = {r["title"]: r for r in blocks[-1]["items"]}
+        self.assertEqual(rows["JSON minify"]["actions"], [{"type": "copy", "text": '{"b":1,"a":[2]}', "title": "Copy result"}])
+        self.assertNotIn("paste", [a["type"] for r in rows.values() for a in r["actions"]])
+
+        self.run_ext("use", context={"clear": True})
+        self.assertEqual(len(self.page()), 3)
+
+    def test_the_page_decodes_a_jwt_from_the_clipboard_and_forgets_old_text(self):
+        token = jwt({"alg": "HS256"}, {"sub": "sven", "exp": 4102444800})
+        self.clip(token)
+        self.run_ext("use", context={"clipboard": True})
+        blocks = self.page()
+        section = next(b for b in blocks if b["type"] == "section")
+        self.assertEqual(section["title"], "JWT")
+        self.assertIn("**Subject:** sven", section["blocks"][0]["text"])
+        self.assertIn('"sub": "sven"', section["blocks"][0]["text"])
+        self.assertEqual([a["title"] for a in section["blocks"][1]["actions"]], ["Copy payload", "Copy header"])
+        self.assertNotIn("JWT", [r["id"] for r in blocks[-1]["items"]])
+
+        held = self.box.cache / "text.json"
+        old = json.loads(held.read_text())
+        held.write_text(json.dumps(dict(old, at=old["at"] - 700)))
+        self.assertEqual(len(self.page()), 3)
+
+    def test_use_clipboard_with_nothing_copied_says_so(self):
+        self.clip("")
+        r = self.run_ext("use", context={"clipboard": True})
+        self.assertEqual(r.of_type("hud"), [{"type": "hud", "text": "The clipboard holds no text"}])

@@ -27,6 +27,7 @@ class SummarisePageTests(ExtensionTestCase):
         self.assertIn("pdf", box["files"])
         self.assertIn("path", box["placeholder"])  # an older Pilot has no Choose button: a pasted path still reads
         self.assertEqual([b["type"] for b in blocks], ["section", "markdown"])
+        self.assertNotIn("Hyper+Space", blocks[1]["text"])  # the page does the job itself (Sven, 2026-10-31)
         self.assertNotIn("refresh", self.blocks_message("page", "page"))
 
     def test_a_chosen_file_is_summarised_and_its_summary_shows_with_copy(self):

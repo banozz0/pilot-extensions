@@ -691,8 +691,8 @@ def page(run, store):
     item = store.current(text=True)
     if not item:
         blocks = [new_box(), {"type": "markdown", "text":
-                  "Or copy a link or a document in Finder and open **Summarise** in Hyper+Space or from 📝 in the menu bar. "
-                  "Hyper+drag over a link shows Summarise in the selection pill too."}]
+                  "YouTube videos (from their transcript), web pages, PDFs and text documents. The summary shows here, "
+                  "with its full text, Copy, Save as .md and Ask about it."}]
         others = store.earlier()[:10]
         if others:
             blocks.append(earlier_block(others))

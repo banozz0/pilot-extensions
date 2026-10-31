@@ -299,3 +299,40 @@ class ObsidianSearchTests(ExtensionTestCase):
         self.assertEqual([i.get("id") for i in items[:2]], ["Pilot spec.md", "Projects/Old/Pilot notes.md"])
         self.assertTrue(items[-1]["title"].startswith("Still reading the vault: "), items[-1])
         self.assertEqual(len(items), 3, "body hits wait for the read")
+
+    # The page (Sven, 2026-10-31): a search box over the vault, the notes it finds opening in Obsidian from the page.
+
+    def test_the_empty_page_lists_recent_notes(self):
+        blocks = self.page()
+        self.assertEqual(blocks[0]["type"], "input")
+        self.assertTrue(blocks[0]["live"])
+        self.assertEqual(blocks[0]["action"]["command"], "find")
+        self.assertEqual(blocks[1]["title"], "Recent in Notes Vault")
+        self.assertEqual([i["id"] for i in blocks[1]["items"]][:2], ["Projects/Pilot/Journal.md", "Knowledge/Tiling.md"])
+
+    def test_the_page_searches_as_typed_and_a_click_opens_the_note(self):
+        self.run_ext("find", input=" pilot ")
+        result = self.run_ext("page", surface="page")
+        self.assertNotIn(SECRET_SAMPLE, result.stdout)
+        blocks = self.page()
+        self.assertEqual(blocks[1]["actions"][0]["title"], "Clear “pilot”")
+        self.assertEqual(blocks[2]["title"], "Matches in Notes Vault")
+        journal = blocks[2]["items"][2]
+        self.assertEqual(journal["id"], "Projects/Pilot/Journal.md")
+        self.assertEqual(journal["actions"], [{"type": "open", "title": "Open in Obsidian",
+                                               "url": "obsidian://open?vault=Notes%20Vault&file=Projects%2FPilot%2FJournal"}])
+        self.assertEqual([(a["title"], a["icon"]) for a in journal["inline"]],
+                         [("Copy wikilink", "🔗"), ("Copy path", "📋"), ("Reveal in Finder", "📂")])
+
+        self.run_ext("find", input="zebra crossing")
+        rows = self.page()[2]["items"]
+        self.assertEqual(rows[0]["title"], "No note matches “zebra crossing”")
+        self.assertNotIn("inline", rows[0])
+        self.run_ext("find", input="")
+        self.assertEqual(self.page()[1]["title"], "Recent in Notes Vault")
+
+    def test_the_page_without_a_vault_says_how_to_set_one(self):
+        (self.box.home / "Library" / "Application Support" / "obsidian" / "obsidian.json").unlink()
+        blocks = self.page()
+        self.assertEqual(blocks[0]["type"], "input")
+        self.assertIn("found no Obsidian vault", blocks[1]["text"])

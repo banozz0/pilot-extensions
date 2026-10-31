@@ -232,11 +232,19 @@ def today_detail(state, s, now):
     send({"type": "detail", "markdown": markdown, "metadata": metadata, "actions": actions})
 
 
+def custom_button(s):
+    """The page's Focus for…: a length picked in its button row (Sven, 2026-10-31: the page does what Custom focus does in
+    Hyper+Space), lengths other than the Focus setting's, eight at most."""
+    lengths = [m for m in (15, 20, 30, 45, 50, 60, 90, 120) if m != s.focus][:8]
+    return dict(run_action("focus", "Focus for…"),
+                ask={"choices": [{"title": "%d min" % m, "value": str(m)} for m in lengths]})
+
+
 def page(state, s, now):
-    """The page's blocks: the block as a meter of the time left, today's blocks, and its buttons; asked every 5 s
-    while a block counts down, so the meter moves."""
+    """The page's blocks: the block as a meter of the time left, today's blocks, and its buttons (Focus, Break, Focus
+    for…, then the block's own); asked every 5 s while a block counts down, so the meter moves."""
     block = state.live(now)
-    actions = [run_action("focus", "Focus"), run_action("break", "Break")]
+    actions = [run_action("focus", "Focus %d min" % s.focus), run_action("break", "Break %d min" % s.short), custom_button(s)]
     if block is None:
         meter = {"type": "meter", "label": "Next: " + title({"phase": "focus"}, state, s), "percent": 0,
                  "value": clock(s.focus * 60), "note": "Nothing running"}
@@ -278,6 +286,9 @@ def main():
 
     if command == "focus":
         minutes = context.get("minutes")
+        picked = str(run.get("input") or "")
+        if picked.isdigit():  # the page's Focus for…
+            minutes = int(picked)
         start(state, s, "focus", minutes if type(minutes) is int and minutes in LENGTHS else s.focus)
     elif command == "break":
         start(state, s, "rest", s.short)

@@ -4,8 +4,11 @@
 run message's `pilot.blocks` names them, Omarchy ideas T4) gets a big now over a strip of days instead of today's sections. Data from Open-Meteo (open-meteo.com, free,
 no key, CC BY 4.0): its geocoding API turns the City preference into a place, its forecast API answers for that place.
 
-Where: the City preference, else the city of the Mac's time zone (/etc/localtime, e.g. Europe/Malta → Malta), so no
-location permission is ever asked. A city is looked up once and kept (places.json).
+Where: a place picked on the page, else the City preference, else the city of the Mac's time zone (/etc/localtime, e.g.
+Europe/Malta → Malta), so no location permission is ever asked. A city is looked up once and kept (places.json). The
+page's place box (Sven, 2026-10-31) searches Open-Meteo's geocoding as he types (`find-place`, its answer kept for the page
+in found.json) and a row picks one (`pick-place`, kept in paths.data/picked.json with the City setting it was picked
+under, so a later edit of that setting wins).
 
 Every network call runs in a detached child (`main.py --refresh`, one at a time under refresh.lock) through curl
 (macOS's own), so a slow network never holds a view past Pilot's limit: a view with an answer kept (forecast.json)
@@ -34,6 +37,10 @@ DAYS_SHOWN = {"popover": 5, "page": 7}  # the strip's days, today first
 FORECAST = "forecast.json"
 PLACES = "places.json"
 LOCK = "refresh.lock"
+PICKED = "picked.json"
+FOUND = "found.json"
+FOUND_FOR = 10 * 60  # seconds the page shows a place search
+FOUND_ROWS = 8
 GEOCODING = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_API = "https://api.open-meteo.com/v1/forecast"
 CREDIT = "Weather data by [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0)"
@@ -100,9 +107,41 @@ def settings(run):
     prefs = run.get("preferences") or {}
     city = " ".join(str(prefs.get("city") or "").split())
     units = "fahrenheit" if prefs.get("units") == "fahrenheit" else "celsius"
+    chosen = picked(run, city)
+    if chosen:
+        place = "pick:%s,%s" % (chosen["latitude"], chosen["longitude"])
+        return {"city": chosen["name"], "zone": None, "units": units, "place": place, "key": "%s|%s" % (place, units),
+                "picked": chosen}
     zone = None if city else mac_time_zone()
     place = city.lower() or "zone:%s" % zone
     return {"city": city, "zone": zone, "units": units, "place": place, "key": "%s|%s" % (place, units)}
+
+
+def data_dir(run):
+    """Pilot's data folder for this extension (the cache's when it sends none), made on the first run."""
+    paths = run.get("paths") or {}
+    folder = paths.get("data") or paths.get("cache")
+    if not isinstance(folder, str) or not folder:
+        return None
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def place_of(value):
+    """A place as picked: {"name", "country", "latitude", "longitude"}; None when it does not read."""
+    if not isinstance(value, dict) or not isinstance(value.get("name"), str) or not value["name"].strip():
+        return None
+    lat, lon = value.get("latitude"), value.get("longitude")
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (lat, lon)):
+        return None
+    return {"name": value["name"].strip(), "country": str(value.get("country") or ""), "latitude": lat, "longitude": lon}
+
+
+def picked(run, city):
+    """The place picked on the page while the City setting is still the one it was picked under; else None."""
+    folder = data_dir(run)
+    kept = load(folder, PICKED) if folder else {}
+    return place_of(kept.get("place")) if kept.get("under") == city else None
 
 
 def zone_city(zone):
@@ -132,6 +171,8 @@ def curl(url):
 def find_place(want, folder):
     """The place `want` names, looked up once: {"name", "country", "latitude", "longitude"}, or (None, why). A city may
     carry its country or region after a comma; a time zone's city is the one in that time zone."""
+    if want.get("picked"):
+        return want["picked"], None
     places = load(folder, PLACES)
     if want["place"] in places:
         return places[want["place"]], None
@@ -482,6 +523,32 @@ def view_blocks(run, weather, error, view):
     return found
 
 
+def place_block(run, kept):
+    """The page's place (Sven, 2026-10-31): where it shows and from what, a box that searches a city as Sven types, its
+    answers a row each that picks it, and Back to the City setting while a pick holds."""
+    want = settings(run)
+    where = Weather(kept).where if kept else want["city"] or zone_city(want["zone"]) or "–"
+    source = "picked here" if want.get("picked") else "from Settings" if want["city"] else "your Mac's time zone"
+    inner = [{"type": "input", "placeholder": "Search a city: Valletta, Paris, Tokyo…", "live": True, "debounce": 400,
+              "action": {"type": "run", "command": "find-place", "title": "Search"}}]
+    folder = data_dir(run)
+    held = load(folder, FOUND) if folder else {}
+    if held.get("query") and time.time() - (held.get("at") or 0) < FOUND_FOR:
+        rows = [{"id": "place:%d" % i, "title": r["name"],
+                 "subtitle": " · ".join(p for p in (r.get("admin1"), r.get("country")) if p), "icon": "📍",
+                 "actions": [{"type": "run", "command": "pick-place", "title": "Use %s" % r["name"],
+                              "context": {"place": place_of(r)}}]}
+                for i, r in enumerate(held.get("results") or []) if place_of(r)][:FOUND_ROWS]
+        if not rows:
+            rows = [{"id": "place:none", "title": held.get("error") or "Open-Meteo knows no place called %s" % held["query"],
+                     "icon": "⚠️" if held.get("error") else "🔎"}]
+        inner.append({"type": "list", "items": rows})
+    if want.get("picked"):
+        inner.append({"type": "buttons", "actions": [{"type": "run", "command": "pick-place", "title": "Use the City setting",
+                                                      "context": {"clear": True}}]})
+    return {"type": "section", "title": "Place", "subtitle": "%s · %s" % (where, source), "blocks": inner}
+
+
 def answer_blocks(run, kept, error, running, view):
     page = view == "page"
     if not kept:
@@ -489,7 +556,8 @@ def answer_blocks(run, kept, error, running, view):
     else:
         found = view_blocks(run, Weather(kept), error, view)
     if page:
-        found += [{"type": "buttons", "actions": [refresh_button()]}, {"type": "markdown", "text": CREDIT}]
+        found += [place_block(run, kept), {"type": "buttons", "actions": [refresh_button()]},
+                  {"type": "markdown", "text": CREDIT}]
     message = {"type": "blocks", "blocks": found}
     if running:
         message["refresh"] = REFRESH_SOON
@@ -544,6 +612,46 @@ def refresh(run):
     send({"type": "hud", "text": "Weather: %s" % Weather(kept).summary()})
 
 
+def find_place_command(run):
+    """The page's place box: Open-Meteo's places for the words typed, kept for the page to draw; an emptied box closes the
+    search."""
+    folder = data_dir(run)
+    text = " ".join(str(run.get("input") or "").split())[:100]
+    if not text:
+        try:
+            os.remove(os.path.join(folder, FOUND))
+        except OSError:
+            pass
+        return
+    answer, error = curl(GEOCODING + "?" + urlencode({"name": text, "count": FOUND_ROWS, "language": "en", "format": "json"}))
+    results = [{k: r.get(k) for k in ("name", "admin1", "country", "latitude", "longitude")}
+               for r in (answer or {}).get("results") or [] if isinstance(r, dict) and place_of(r)]
+    save(folder, FOUND, {"query": text, "at": time.time(), "results": results, "error": error})
+    if error:
+        send({"type": "error", "text": error})
+
+
+def pick_place(run):
+    """A place row's pick, kept with the City setting it was picked under; Use the City setting forgets it."""
+    folder = data_dir(run)
+    context = run.get("context") if isinstance(run.get("context"), dict) else {}
+    city = " ".join(str((run.get("preferences") or {}).get("city") or "").split())
+    for name in (FOUND,) + ((PICKED,) if context.get("clear") else ()):
+        try:
+            os.remove(os.path.join(folder, name))
+        except OSError:
+            pass
+    if context.get("clear"):
+        send({"type": "hud", "text": "Weather: back to %s" % (city or "your Mac's time zone")})
+        return
+    place = place_of(context.get("place"))
+    if not place:
+        send({"type": "error", "text": "got no place to use"})
+        return
+    save(folder, PICKED, {"under": city, "place": place})
+    send({"type": "hud", "text": "Weather: %s" % ", ".join(p for p in (place["name"], place["country"]) if p)})
+
+
 def main():
     if sys.argv[1:] == ["--refresh"]:
         refresh_main()
@@ -562,6 +670,10 @@ def main():
         page(run)
     elif command == "refresh":
         refresh(run)
+    elif command == "find-place":
+        find_place_command(run)
+    elif command == "pick-place":
+        pick_place(run)
     else:
         send({"type": "error", "text": "has no command %s" % command})
 

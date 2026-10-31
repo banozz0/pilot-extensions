@@ -4,11 +4,16 @@
 Transform clipboard lists only the transforms that make sense for what the clipboard holds (a JSON row only for JSON,
 a decode only for text that decodes), each row showing its result and copying or pasting it. The clipboard's text is
 never logged or kept.
+
+The page (Sven, 2026-10-31: a page does its job in place) takes the text in a box (or Use clipboard): its transforms as
+rows a click copies, a JWT decoded above them, and Copy new UUID. The hidden use command keeps that text in paths.cache
+for TEXT_FOR seconds so the page can draw it; Clear deletes it at once. It is never logged.
 """
 import base64
 import binascii
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -23,6 +28,8 @@ PREVIEW = 80
 B64 = re.compile(r"[A-Za-z0-9+/_-]+={0,2}\Z")
 JWT = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\Z")
 PERCENT = re.compile(r"%[0-9A-Fa-f]{2}")
+TEXT = "text.json"  # in paths.cache: the page's text
+TEXT_FOR = 600  # seconds the page keeps it
 
 
 def send(message):
@@ -179,7 +186,12 @@ def jwt_detail(context):
     if not parts:
         send({"type": "error", "text": "found no JWT on the clipboard"})
         return
-    header, payload = parts
+    markdown, metadata, actions = jwt_view(*parts)
+    send({"type": "detail", "markdown": markdown, "metadata": metadata, "actions": actions})
+
+
+def jwt_view(header, payload):
+    """A decoded JWT's markdown, facts and copy actions, for the detail and the page."""
     now = time.time()
     metadata = [{"label": "Algorithm", "text": str(header.get("alg", "none"))}]
     for key, label in (("iss", "Issuer"), ("sub", "Subject"), ("aud", "Audience")):
@@ -196,9 +208,78 @@ def jwt_detail(context):
     body = json.dumps(payload, indent=2, ensure_ascii=False)
     markdown = ("# JWT\n\nDecoded, not verified: the signature is not checked.\n\n## Header\n\n```json\n%s\n```\n\n"
                 "## Payload\n\n```json\n%s\n```\n" % (head, body))
-    send({"type": "detail", "markdown": markdown, "metadata": metadata,
-          "actions": [{"type": "copy", "text": body, "title": "Copy payload"},
-                      {"type": "copy", "text": head, "title": "Copy header"}]})
+    return markdown, metadata, [{"type": "copy", "text": body, "title": "Copy payload"},
+                                {"type": "copy", "text": head, "title": "Copy header"}]
+
+
+def text_path(run):
+    folder = (run.get("paths") or {}).get("cache")
+    return os.path.join(folder, TEXT) if folder else None
+
+
+def held_text(run):
+    """The page's text while it is younger than TEXT_FOR, else ""."""
+    try:
+        with open(text_path(run) or "", encoding="utf-8") as f:
+            held = json.load(f)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(held, dict) or time.time() - (held.get("at") or 0) > TEXT_FOR:
+        return ""
+    return held.get("text") if isinstance(held.get("text"), str) else ""
+
+
+def use(run):
+    """The page's text: what the box holds, or the clipboard's (Use clipboard); an emptied box or Clear deletes it."""
+    path = text_path(run)
+    if not path:
+        return
+    context = run.get("context") if isinstance(run.get("context"), dict) else {}
+    text = clipboard() if context.get("clipboard") else (run.get("input") or "")
+    if context.get("clear") or not text.strip():
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        if context.get("clipboard"):
+            send({"type": "hud", "text": "The clipboard holds no text"})
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump({"text": text, "at": time.time()}, f)
+    os.replace(path + ".tmp", path)
+
+
+def page(run):
+    """The page: the box and its buttons; with a text, a JWT decoded when it is one, then its transforms, a click
+    copying one. Paste stays in Hyper+Space: on the page it would land in Pilot's own window."""
+    text = held_text(run)
+    buttons = [{"type": "run", "command": "use", "title": "Use clipboard", "context": {"clipboard": True}},
+               {"type": "run", "command": "new-uuid", "title": "Copy new UUID"}]
+    if text:
+        buttons.append({"type": "run", "command": "use", "title": "Clear", "context": {"clear": True}})
+    blocks = [{"type": "input", "placeholder": "Paste text to transform: JSON, a JWT, a timestamp, base64…", "live": True,
+               "debounce": 400, "action": {"type": "run", "command": "use", "title": "Transform"}},
+              {"type": "buttons", "actions": buttons}]
+    if not text:
+        blocks.append({"type": "markdown", "text": "Paste text above, or Use clipboard: its transforms show here."})
+        send({"type": "blocks", "blocks": blocks})
+        return
+    blocks.append({"type": "markdown", "text": "**%d characters:** %s" % (len(text), preview(text))})
+    parts = jwt_parts(text)
+    if parts:
+        markdown, metadata, actions = jwt_view(*parts)
+        facts = "\n".join("- **%s:** %s" % (m["label"], m["text"]) for m in metadata)
+        blocks.append({"type": "section", "title": "JWT", "subtitle": "decoded, not verified", "blocks": [
+            {"type": "markdown", "text": facts + "\n\n" + markdown.split("\n\n", 2)[2]},
+            {"type": "buttons", "actions": actions}]})
+    rows = []
+    for item in transforms(text):
+        copies = [a for a in item.get("actions", []) if a["type"] == "copy"]
+        if copies and item["id"] != "JWT":
+            rows.append(dict(item, actions=copies))
+    blocks.append({"type": "list", "title": "Transforms · click copies", "items": rows})
+    send({"type": "blocks", "blocks": blocks})
 
 
 def main():
@@ -216,6 +297,10 @@ def main():
         value = str(uuid.uuid4())
         send({"type": "action", "action": {"type": "copy", "text": value}})
         send({"type": "action", "action": {"type": "hud", "text": "Copied %s" % value}})
+    elif command == "use":
+        use(run)
+    elif command == "page":
+        page(run)
     else:
         send({"type": "error", "text": "has no command %s" % command})
 

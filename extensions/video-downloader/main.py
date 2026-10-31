@@ -615,9 +615,6 @@ def page(run, paths):
         blocks.append(saved_block(job))
     elif job.get("status") == "failed":
         blocks.append({"type": "markdown", "text": "The last download failed: %s" % job.get("error", "")})
-    else:
-        blocks.append({"type": "markdown", "text": "Or copy a link and open **Video downloader** in Hyper+Space, or click 📥 "
-                                                   "in the menu bar."})
     send({"type": "blocks", "blocks": blocks})
 
 

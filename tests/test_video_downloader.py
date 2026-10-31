@@ -42,7 +42,9 @@ class VideoDownloaderPageTests(ExtensionTestCase):
         return box
 
     def test_the_box_offers_every_format_the_last_one_used_first(self):
-        box = self.box_of(self.page())
+        blocks = self.page()
+        self.assertEqual(len(blocks), 1)  # nothing sends Sven to Hyper+Space or the menu bar (2026-10-31)
+        box = self.box_of(blocks)
         self.assertEqual(box["action"]["context"], {"format": "best"})
         self.assertEqual([a["context"]["format"] for a in box["actions"]], ["720", "m4a", "mp3"])
         self.assertEqual({a["command"] for a in [box["action"]] + box["actions"]}, {"download"})

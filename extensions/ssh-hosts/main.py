@@ -5,6 +5,10 @@ Only `Host` names without wildcards are listed (a `*`, `?` or `!` pattern is a r
 User and Port the first block naming them sets, as ssh reads it. Nothing is ever connected from the list itself: the
 hidden connect command opens a terminal window running `ssh <host>`, and only for a host the config still names, so a
 crafted context can never run anything else. Keys, identities and known_hosts are never read.
+
+Its page (Sven, 2026-10-31: a page does its job in place) has a box that narrows the hosts as Sven types (the hidden
+`filter` command keeps the words in paths.data, which the page reads back) and the hosts as rows, Connect on a click and
+as an inline button, the copy and the config file on the ⋯ menu.
 """
 import glob
 import json
@@ -108,13 +112,17 @@ def app_name(app):
     return os.path.basename(app)[:-4] if app.endswith(".app") else app
 
 
-def list_hosts(run):
+def host_items(run, words=""):
+    """A row per host, its name, address and user holding every word in `words`."""
     found = hosts()
     terminal = app_name(terminal_app(run.get("preferences") or {}))
     items = []
     for name in sorted(found, key=str.lower):
         settings = found[name]
         where = address(settings)
+        text = " ".join(x for x in (name, where, settings.get("user")) if x).lower()
+        if not all(w in text for w in words.lower().split()):
+            continue
         items.append({
             "id": name, "title": name, "icon": "🖥️",
             "subtitle": " · ".join(x for x in (where, tilde(settings["source"])) if x),
@@ -124,10 +132,55 @@ def list_hosts(run):
                 {"type": "copy", "text": "ssh %s" % name, "title": "Copy ssh %s" % name},
                 {"type": "open", "url": settings["source"], "title": "Open %s" % os.path.basename(settings["source"])},
             ]})
-    if not items:
-        items = [{"title": "No hosts in %s" % CONFIG, "icon": "🖥️",
-                  "subtitle": "Add a Host block, e.g. Host prod with HostName 203.0.113.7, and it shows here"}]
-    send({"type": "list", "items": items})
+    return items
+
+
+EMPTY = {"title": "No hosts in %s" % CONFIG, "icon": "🖥️",
+         "subtitle": "Add a Host block, e.g. Host prod with HostName 203.0.113.7, and it shows here"}
+
+
+def list_hosts(run):
+    send({"type": "list", "items": host_items(run) or [EMPTY]})
+
+
+def filter_path(run):
+    folder = (run.get("paths") or {}).get("data") or os.environ.get("TMPDIR", "/tmp")
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, "filter.txt")
+
+
+def held_filter(run):
+    try:
+        with open(filter_path(run), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def keep_filter(run):
+    """The page's box: the words typed, kept for the page; blank (an emptied box, or Show all) clears them."""
+    words = (run.get("input") or "").strip()[:200]
+    with open(filter_path(run), "w", encoding="utf-8") as f:
+        f.write(words)
+
+
+def page(run):
+    words = held_filter(run)
+    rows = host_items(run, words)
+    for row in rows:
+        row["inline"] = [dict(row["actions"][0], icon="terminal")]
+    box = {"type": "input", "placeholder": "Filter hosts by name, address or user", "live": True,
+           "action": {"type": "run", "command": "filter", "title": "Filter"}}
+    blocks = [box]
+    if words:
+        blocks.append({"type": "buttons", "actions": [{"type": "run", "command": "filter", "title": "Show all hosts"}]})
+        title = "%d host%s matching “%s”" % (len(rows), "" if len(rows) == 1 else "s", words)
+        rows = rows or [{"title": "No host matches “%s”" % words, "icon": "🔎"}]
+    else:
+        title = "Hosts"
+        rows = rows or [EMPTY]
+    blocks.append({"type": "list", "title": title, "items": rows})
+    send({"type": "blocks", "blocks": blocks})
 
 
 def open_with(arguments):
@@ -170,6 +223,10 @@ def main():
         list_hosts(run)
     elif command == "connect":
         connect(run)
+    elif command == "page":
+        page(run)
+    elif command == "filter":
+        keep_filter(run)
     else:
         send({"type": "error", "text": "has no command %s" % command})
 

@@ -261,7 +261,7 @@ class TodoTests(ExtensionTestCase):
         for r in rows:
             self.assertEqual((r["actions"][0]["command"], r["actions"][0]["ask"]), ("edit", {"text": r["title"]}))
             self.assertIn((r["inline"][0]["command"], r["inline"][0]["icon"]), (("done", "circle"), ("undone", "checkmark.circle")))
-            self.assertEqual(r["inline"][1]["command"], "delete")
+            self.assertEqual(r["inline"][-1]["command"], "delete")
             self.assertFalse(any("key" in a or "stay" in a for a in r["actions"]))
 
     def test_page_lists_counts_sections_with_reorder_where_the_order_is_yours(self):
@@ -276,6 +276,19 @@ class TodoTests(ExtensionTestCase):
         self.store(self.todo("a", "one", due=5), self.todo("b", "two"))
         lists = [b for b in self.page() if b["type"] == "list"]
         self.assertEqual([(b["title"], "reorder" in b) for b in lists], [("Upcoming", False), ("No date", True)])
+
+    def test_the_page_sets_a_due_day_in_the_row_and_the_choice_lands(self):
+        # Sven, 2026-10-31: the page does its job in place; the due day was only under ⋯.
+        self.store(self.todo("a", "one"), self.todo("b", "two", done=True))
+        rows = {r["title"]: r for r in self.rows(self.page()) if "inline" in r}
+        due = rows["one"]["inline"][1]
+        self.assertEqual((due["command"], due["icon"], due["context"]), ("due", "📅", {"id": "a"}))
+        self.assertEqual(due["ask"]["choices"][0]["title"], "Today")
+        self.assertNotIn("due", [a.get("command") for a in rows["two"]["inline"]])  # a done one has no day
+        self.run_ext("due", context=due["context"], input=due["ask"]["choices"][1]["value"])
+        lists = [b for b in self.page() if b["type"] == "list"]
+        self.assertEqual([(b["title"], [i["title"] for i in b["items"]]) for b in lists],
+                         [("Upcoming", ["one"]), ("Done", ["two"])])
 
     def test_empty_popover_and_page_still_offer_the_input(self):
         self.assertEqual([b["type"] for b in self.popover()], ["input", "markdown"])

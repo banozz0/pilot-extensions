@@ -6,6 +6,10 @@ pin order, `visits` one `<unix time>\t<folder>` line per landing. Recents are ra
 frecency: a visit weighs 4 within the hour, 2 within the day, 1/2 within the week, 1/4 after), pins and folders that
 no longer exist left out. Nothing is ever written to easy-cd's files. The hidden open-terminal command opens a window
 through `open`, so the program never holds it.
+
+The page (Sven, 2026-10-31: a page does its job in place) is a search box over the same folders, pinned then recent; a
+click opens a terminal there, its inline buttons Finder and Copy path. The box searches as Sven types: the hidden find
+command keeps its words in paths.data for SEARCH_FOR seconds, and the page reads them back.
 """
 import itertools
 import json
@@ -15,6 +19,8 @@ import sys
 import time
 
 RECENTS = 30
+SEARCH = "search.json"  # in paths.data: the page's search words
+SEARCH_FOR = 600  # seconds the page's words count, so a page opened later starts unfiltered
 GHOSTTY = ["/Applications/Ghostty.app", os.path.expanduser("~/Applications/Ghostty.app")]
 
 
@@ -106,21 +112,87 @@ def row(folder, icon, note, terminal):
                         {"type": "copy", "text": folder, "title": "Copy path"}]}
 
 
-def list_folders(run):
+def folders(run):
+    """(pinned rows, recent rows, the row saying why there are none)."""
     state = state_dir()
     pin_lines, visit_lines = read_lines(os.path.join(state, "pins")), read_lines(os.path.join(state, "visits"))
     now = int(time.time())
     pinned = pins(pin_lines)
     terminal = app_name(terminal_app(run.get("preferences") or {}))
-    items = [row(d, "📌", "pinned", terminal) for d in pinned]
     recent = (r for r in recents(visit_lines, now) if r[0] not in pinned and os.path.isdir(r[0]))
-    items += [row(d, "🕘", ago(last, now), terminal) for d, last in itertools.islice(recent, RECENTS)]
-    if not items:
-        none = pin_lines is None and visit_lines is None
-        items = [{"title": "easy-cd has no pins or recent folders yet" if none else "easy-cd's folders are all gone",
-                  "subtitle": "Run ecd in a terminal: Enter lands in a folder, Ctrl+P pins it" if none
-                  else "The folders it pinned or visited no longer exist", "icon": "📂"}]
-    send({"type": "list", "items": items})
+    none = pin_lines is None and visit_lines is None
+    empty = {"title": "easy-cd has no pins or recent folders yet" if none else "easy-cd's folders are all gone",
+             "subtitle": "Run ecd in a terminal: Enter lands in a folder, Ctrl+P pins it" if none
+             else "The folders it pinned or visited no longer exist", "icon": "📂"}
+    return ([row(d, "📌", "pinned", terminal) for d in pinned],
+            [row(d, "🕘", ago(last, now), terminal) for d, last in itertools.islice(recent, RECENTS)], empty)
+
+
+def list_folders(run):
+    pinned, recent, empty = folders(run)
+    send({"type": "list", "items": pinned + recent or [empty]})
+
+
+def held_words(run):
+    """The page's search words while they are younger than SEARCH_FOR, else ""."""
+    try:
+        with open(os.path.join((run.get("paths") or {}).get("data") or "", SEARCH), encoding="utf-8") as f:
+            held = json.load(f)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(held, dict) or time.time() - (held.get("at") or 0) > SEARCH_FOR:
+        return ""
+    return held.get("query") if isinstance(held.get("query"), str) else ""
+
+
+def find(run):
+    """The page's box: its words kept for the page, an emptied box (or Clear) forgetting them. Quiet: the page shows."""
+    folder = (run.get("paths") or {}).get("data")
+    if not folder:
+        return
+    path = os.path.join(folder, SEARCH)
+    words = " ".join((run.get("input") or "").split())
+    if not words or (run.get("context") or {}).get("clear"):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+    os.makedirs(folder, exist_ok=True)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump({"query": words, "at": time.time()}, f)
+    os.replace(path + ".tmp", path)
+
+
+def matches(item, words):
+    hay = " ".join((item["title"], item.get("keywords", ""))).lower()
+    return all(w in hay for w in words.lower().split())
+
+
+def page_row(item):
+    """A list row on the page: a click opens the terminal; Finder and Copy path as inline buttons."""
+    run, finder, copy = item["actions"]
+    return dict(item, actions=[run], inline=[dict(finder, icon="📂"), dict(copy, icon="📋")])
+
+
+def page(run):
+    """The page: the search box, then the pinned folders and the recent ones that match its words."""
+    words = held_words(run)
+    blocks = [{"type": "input", "placeholder": "Search your pinned and recent folders", "live": True,
+               "action": {"type": "run", "command": "find", "title": "Search"}}]
+    pinned, recent, empty = folders(run)
+    if words:
+        pinned, recent = [i for i in pinned if matches(i, words)], [i for i in recent if matches(i, words)]
+        blocks.append({"type": "buttons", "actions": [{"type": "run", "command": "find", "title": "Clear “%s”" % words,
+                                                       "context": {"clear": True}}]})
+    if pinned:
+        blocks.append({"type": "list", "title": "Pinned", "items": [page_row(i) for i in pinned]})
+    if recent:
+        blocks.append({"type": "list", "title": "Recent", "items": [page_row(i) for i in recent]})
+    if not pinned and not recent:
+        blocks.append({"type": "markdown", "text": "No folder matches “%s”." % words if words else
+                       "**%s.** %s" % (empty["title"], empty["subtitle"])})
+    send({"type": "blocks", "blocks": blocks})
 
 
 def open_terminal(run):
@@ -154,6 +226,10 @@ def main():
         list_folders(run)
     elif command == "open-terminal":
         open_terminal(run)
+    elif command == "page":
+        page(run)
+    elif command == "find":
+        find(run)
     else:
         send({"type": "error", "text": "has no command %s" % command})
 

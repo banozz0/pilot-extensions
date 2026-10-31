@@ -162,6 +162,34 @@ class GitTests(ExtensionTestCase):
         self.assertEqual(blocks[-1]["actions"][0]["command"], "fetch")
         self.wait_for_fetch()
 
+    def test_page_finds_any_repo_as_its_box_runs_and_each_row_opens_a_terminal(self):
+        blocks = self.page(home=self.box.home)
+        box = blocks[1]
+        self.assertEqual(box, {"type": "input", "placeholder": "Find a repo by name or branch", "live": True,
+                               "action": {"type": "run", "command": "find", "title": "Find"}})
+        rows = self.rows(blocks)
+        self.assertEqual([(a["command"], a["icon"]) for a in rows["ahead"]["inline"]],
+                         [("push", "arrow.up"), ("open-terminal", "terminal")])
+        self.assertTrue(rows["ahead"]["inline"][-1]["title"].startswith("Open in "))
+        self.assertNotIn("clean", rows, "a clean repo waits behind its row until searched for")
+
+        self.run_ext("find", input="  cle ", home=self.box.home)
+        blocks = self.page(home=self.box.home)
+        found = [b for b in blocks if b["type"] == "list"][0]
+        self.assertTrue(found["title"].startswith("Matching “cle”"), found["title"])
+        self.assertEqual([i["title"] for i in found["items"]], ["clean"])
+        self.assertEqual(blocks[-1]["actions"][0], {"type": "run", "command": "find", "title": "Show what needs you"})
+
+        self.run_ext("find", input="nothing-like-it", home=self.box.home)
+        self.assertIn("matches “nothing-like-it”", self.page(home=self.box.home)[2]["text"])
+
+        self.run_ext("find", home=self.box.home)  # Show what needs you: no text, the search cleared
+        self.assertIn("ahead", self.rows(self.page(home=self.box.home)))
+        listed = self.run_ext("repos", home=self.box.home).items
+        self.assertFalse([a for i in listed for a in i.get("inline", []) if a.get("icon") == "terminal"],
+                         "Hyper+Space's rows stay as they were")
+        self.wait_for_fetch()
+
     def test_the_folder_comes_from_pilot_then_the_preference(self):
         other = self.box.root / "elsewhere"
         self.clone(other / "solo")

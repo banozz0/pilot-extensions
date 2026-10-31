@@ -2,7 +2,7 @@
 """Now playing for Pilot: whatever the Mac is playing, as Control Center's Now Playing shows it (Music, Spotify, a
 YouTube tab in Chrome, Safari or Zen, any app that tells macOS), as a menu-bar item ("♫ Artist – Title", a lone ♫ while
 paused, nothing when nothing has played), its popover with the track, a progress meter and play or pause, previous and
-next (Surfaces v2, Pilot story 165), and the same controls in Hyper+Space.
+next (Surfaces v2, Pilot story 165), the same on its page with Show beside them, and the same controls in Hyper+Space.
 
 macOS keeps Now Playing in its MediaRemote framework, private and since macOS 15.4 closed to apps Apple did not sign;
 osascript is Apple's, so a JavaScript for Automation script run by it reads MRNowPlayingRequest and sends
@@ -417,6 +417,16 @@ def bar(run):
         send({"type": "bar", "text": bar_text(track, mode), "blocks": blocks})
 
 
+def page(run):
+    """Its page (Sven, 2026-10-31: a page does its job in place): the popover's track, how far in and its controls, with
+    Show in <app> as a button too, asked again on the popover's pace."""
+    track, blocks, _ = answer(run, BUDGET["popover"])
+    if track is not None:
+        blocks[0]["blocks"][-1]["actions"].append(show_action(track))
+    playing = track is not None and track["playing"]
+    send({"type": "blocks", "blocks": blocks, "refresh": REFRESH["playing" if playing else "idle"]})
+
+
 def detail(run):
     """Hyper+Space's Now playing: the track, how far in, and the controls on Return and Cmd+K."""
     track, blocks, trouble = answer(run, BUDGET["detail"], art=False)
@@ -554,6 +564,8 @@ def main():
         bar(run)
     elif command == "now":
         detail(run)
+    elif command == "page":
+        page(run)
     elif command in VERBS:
         control(run, command)
     elif command == "show":

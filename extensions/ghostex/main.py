@@ -242,7 +242,8 @@ class Board:
 
     def item(self, session, state, idle_for, page=False):
         """One session as a row: a click opens its chat; ⋯ renames, tags, sleeps or wakes, focuses and closes it. The
-        page adds badges and inline buttons (Reply, Sleep or Wake), every inline also in actions for an older Pilot."""
+        page adds badges and inline buttons (Reply, Sleep or Wake or else Rename, Close), every inline also in actions for
+        an older Pilot."""
         ref, title = session["globalRef"], title_of(session)
         allowed = allowed_of(session)
         asleep = state == "asleep"
@@ -273,7 +274,8 @@ class Board:
                 badges.append({"text": "%d queued" % session["queuedPromptCount"],
                                "tone": "alert" if session.get("queuedPromptFailedCount") else None})
             row["badges"] = [dict((k, v) for k, v in b.items() if v is not None) for b in badges]
-            row["inline"] = [chat] + ([switch] if switch else [])
+            # Three at most: Reply, Sleep or Wake (else Rename), and Close, asked first in the row.
+            row["inline"] = [chat, switch or rename] + ([close] if allowed.get("kill", True) else [])
         return row
 
     def popover(self):

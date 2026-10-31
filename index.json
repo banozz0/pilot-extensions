@@ -5,7 +5,7 @@
       "id": "ai-usage",
       "title": "AI usage",
       "icon": "📊",
-      "version": "3.4.0",
+      "version": "3.5.0",
       "description": "See how much of your Claude and Codex limits is left this session and this week, how your pace compares, and when each resets, in the menu bar, as CodexBar shows it. Add a second Codex account with Codex's own sign-in.",
       "examples": [
         "Glance at the menu bar: Claude's and Codex's logo with the session left, amber once a window is 60% used, red from 85%",
@@ -49,14 +49,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "de229d2ec9cc8242d06fcb8a0bd8a6686e8eabe604b217f0afd6b2416881df62",
-          "size": 3861,
+          "sha256": "94f3904092ecc95ea8c10ba51b630f002bc046eb6e77d29b8a65143aef5b4e49",
+          "size": 3970,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "3e82ad8e5491c5f4958fdb12a4101b13eb8f9e322a71d872b5b2dd76599194d4",
-          "size": 75157,
+          "sha256": "e64e7c2b77285619a1aec2ee2eedb9e0883baec9b6ae62faa3b96383fa17b3cb",
+          "size": 75854,
           "executable": true
         }
       ]
@@ -65,8 +65,8 @@
       "id": "claude-sessions",
       "title": "Claude Sessions",
       "icon": "🤖",
-      "version": "1.0.2",
-      "description": "Find a Claude Code session you had and pick it back up, without digging through folders.",
+      "version": "1.1.0",
+      "description": "Find a Claude Code session you had and pick it back up, without digging through folders. Its page searches them as you type.",
       "examples": [
         "Type pilot: your sessions in ~/code/pilot, newest first",
         "Return copies claude --resume <id>; paste it in a terminal to carry on"
@@ -92,14 +92,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "dcf2019e8e6128735e13b779ca301fdbd709dea4be88d25a546690f43a59c99f",
-          "size": 714,
+          "sha256": "5cef954408a123fba9cbc9f98df2c02e715a20fd0ae9648935bc74f7399ed76a",
+          "size": 1028,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "01f984bbe00c3115bd505514923115d507a59c2b21725ec7c579b77d1afe2ec3",
-          "size": 10540,
+          "sha256": "8c09363ced21aa8a51c52f8ef6563965dc62128e819779b0ea1d323b7d9ab12b",
+          "size": 14021,
           "executable": true
         }
       ]
@@ -108,8 +108,8 @@
       "id": "dev-utils",
       "title": "Dev Utils",
       "icon": "🧰",
-      "version": "1.0.1",
-      "description": "Turns whatever you copied into the form you need, without a website.",
+      "version": "1.1.0",
+      "description": "Turns whatever you copied into the form you need, without a website. Its page takes pasted text and shows every transform.",
       "examples": [
         "Copy a JWT, run Decode JWT: its header, payload and when it expires",
         "Copy 1760083200, Transform clipboard: 2025-10-10T08:00:00Z"
@@ -143,14 +143,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "fcf3c059071a6c61b87db2da111f9436f9ee90dc52e81bfa038de4ef1dffc722",
-          "size": 752,
+          "sha256": "ed90430225c10ac4a3e525a117a7aa32a8f2b5a6d42b1514b1d286ed497c9d0f",
+          "size": 1076,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "57ba39df1dbecc85f7ec12d49c308f13c030e78773c3309800aed973f0be1987",
-          "size": 9228,
+          "sha256": "7db28034d5cfaabfa78002647e388440c197924c974e8cd1eebde69a4f6e2f14",
+          "size": 13247,
           "executable": true
         }
       ]
@@ -159,8 +159,8 @@
       "id": "easy-cd",
       "title": "Easy-CD folders",
       "icon": "📂",
-      "version": "1.0.0",
-      "description": "Open the folders you pinned or visited lately with easy-cd (ecd) in a terminal, without typing a path.",
+      "version": "1.1.0",
+      "description": "Open the folders you pinned or visited lately with easy-cd (ecd) in a terminal, without typing a path. Its page searches them as you type.",
       "examples": [
         "Type pil: your pinned ~/code/pilot first, then recent folders matching it; Return opens a terminal there",
         "Cmd+K on a folder: open it in Finder or copy its path"
@@ -186,14 +186,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "9c94cd6eccd3d6cef42686dd420fa69a8afc0ef260114d71ca9c7ce0d00b08e9",
-          "size": 914,
+          "sha256": "2199609ac21edbeca13d1aea2438df7d7c21b673e488e25808b78e6afccd3c49",
+          "size": 1219,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "d0d5bdac91db40fd7b4afd11089fed8c7ddca0a4f73fc0c5cd6c003fd94f0a1d",
-          "size": 6285,
+          "sha256": "148c88faf91e2129a6ddc8baffdf155e84afa9bf415d4af0614adc37db8589e6",
+          "size": 9751,
           "executable": true
         }
       ]
@@ -202,7 +202,7 @@
       "id": "ghostex",
       "title": "Ghostex sessions",
       "icon": "👻",
-      "version": "2.0.1",
+      "version": "2.1.0",
       "description": "See which Ghostex agents are working or waiting on you from the menu bar, read a session's chat and reply to it, and rename, tag, sleep, wake or close sessions without opening Ghostex.",
       "examples": [
         "The menu bar shows 👻 5: click it, pick Pilot coordinator 2, read its last replies and type an answer; Return queues it until the agent stops, Option+Return interrupts",
@@ -228,14 +228,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "ec19583b7cba4a4e5a843bda15de4ac58903e889d369cb682c1b30eca22c087e",
+          "sha256": "df8eb4aeb6c36d9c6086ce19309e6c8bbaa047e30c59ef5c0f8ff21d1831c7ba",
           "size": 2130,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "882e5ee459982b04b8e751484f75df942d1bdd7bc216dfcf67294b98bc5be803",
-          "size": 30013,
+          "sha256": "300944f0a5415b3295ae15474a58a49e4e106ebf28626b6f486b36339d6d4d76",
+          "size": 30179,
           "executable": true
         }
       ]
@@ -244,7 +244,7 @@
       "id": "git",
       "title": "lazygit",
       "icon": "🌿",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "description": "See which of your git repos have changes to commit or commits to push or pull; click one to open lazygit in it, or pull or push in one click.",
       "examples": [
         "The menu bar shows ⎇ 2: click it to see pilot with 3 changed files and agents with 2 commits to push, then Push",
@@ -274,14 +274,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "378192b4d5d319fc608311d854cfc0594e6fa9c4a5c9f7bb594f11ffce4bd5c7",
-          "size": 2031,
+          "sha256": "cd30205e791f35365a9f7907e6bad1c54612dead8629ea81458fb46d48e865a4",
+          "size": 2132,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "b436e14ee191e2742460aa84f0b6e94ae549cdff0d8acb3769eaacbe3b4dbc7f",
-          "size": 28906,
+          "sha256": "0c8903aabe00a2cce02884d9016cda33f4361446648eb324f01bc4841f8805aa",
+          "size": 31642,
           "executable": true
         }
       ]
@@ -290,7 +290,7 @@
       "id": "github",
       "title": "GitHub",
       "icon": "🐙",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "description": "See what on GitHub needs you: pull requests waiting on your review, your own with their checks, issues given to you and CI runs that failed.",
       "examples": [
         "Type pull: PRs waiting on your review first, then yours, each with its checks passing or failing; Return opens it on github.com",
@@ -328,14 +328,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "aa5bcbcc9641842d71aac7ae18dc14076461cd34207083a7976997818235cfdf",
+          "sha256": "3dc998f02f120e0d47f0976bfc2b9652435d9f18e9faeabcccc39f4f478483ea",
           "size": 1694,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "2a11dfd8070758e7d19d8eadaf2b242632e2403b5f8e10ebf629bd16a4786ad7",
-          "size": 23251,
+          "sha256": "97b4fcb381b1becd8c9188d99eb376d42b57d76b8a9afcb59584f4e8247654fa",
+          "size": 24375,
           "executable": true
         }
       ]
@@ -397,8 +397,8 @@
       "id": "now-playing",
       "title": "Now playing",
       "icon": "🎵",
-      "version": "1.2.1",
-      "description": "Whatever your Mac is playing, in the menu bar, as Control Center's Now Playing sees it: Music, Spotify, a YouTube tab in Chrome, Safari or Zen, any app. Click it for the track with its artwork and artist, how far in, play or pause, previous and next; Favourite while Music plays. Click the track to go to the tab or app playing it. The artwork comes from Music, Spotify's cover or a YouTube tab's thumbnail. Never starts a player; macOS asks once to let Pilot control the browser (for its tab and a video's thumbnail), Spotify (its cover) and Music (its artwork and Favourite).",
+      "version": "1.3.0",
+      "description": "Whatever your Mac is playing, in the menu bar, as Control Center's Now Playing sees it: Music, Spotify, a YouTube tab in Chrome, Safari or Zen, any app. Click it, or open its page, for the track with its artwork and artist, how far in, play or pause, previous and next; Favourite while Music plays. Click the track to go to the tab or app playing it. The artwork comes from Music, Spotify's cover or a YouTube tab's thumbnail. Never starts a player; macOS asks once to let Pilot control the browser (for its tab and a video's thumbnail), Spotify (its cover) and Music (its artwork and Favourite).",
       "examples": [
         "A YouTube video plays in Chrome: the menu bar shows ♫ and its title; a lone ♫ while paused, nothing when nothing has played",
         "Click it, then the track: Chrome comes forward on the YouTube tab that plays it"
@@ -454,14 +454,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "0fb5d4d844a54cc9d61bcbdc1e422ce404dfc0c483853cf4a8d8380c8f725796",
-          "size": 2271,
+          "sha256": "f6512a1dd5a0cf79bc49b620c0142271c3b95a10673d8b169c443f1ee5edc5bf",
+          "size": 2440,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "383471498fc01eec13aa813f90e03365e2730ae6b1c983efc4458632ee33ecf9",
-          "size": 26011,
+          "sha256": "3c294f9e61e3b5a325ae3785c42a5aa95192bb47709dc726a999541868b2d379",
+          "size": 26616,
           "executable": true
         }
       ]
@@ -470,8 +470,8 @@
       "id": "obsidian-search",
       "title": "Obsidian search",
       "icon": "🪨",
-      "version": "1.0.0",
-      "description": "Find a note in your Obsidian vault by its title or by what it says, without opening Obsidian first.",
+      "version": "1.1.0",
+      "description": "Find a note in your Obsidian vault by its title or by what it says, without opening Obsidian first. Its page searches as you type.",
       "examples": [
         "Type pilot spec: notes titled with those words first, then notes that mention them, each with the line that matched; Return opens it in Obsidian",
         "Cmd+K on a note: preview it, copy its [[wikilink]] or path, or show it in Finder"
@@ -498,14 +498,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "dfe8fc2e7d6ba27276d5c25cdee5137f45aa3e30f93dd046239aa1f85f9e8c4f",
-          "size": 1246,
+          "sha256": "f61b8e3f488ea190c218a337669956ed84107d4706e183ca67c6b6b9ec881190",
+          "size": 1552,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "3ce2bcab2e5ec59cdc4a782b053cadddc0945e59636bf487e458e5625e1c2ebb",
-          "size": 19657,
+          "sha256": "575100404a65fb3783a5c27ac7374484663c1ac2c7deb215d5a398d31caa2922",
+          "size": 23317,
           "executable": true
         }
       ]
@@ -514,7 +514,7 @@
       "id": "pomodoro",
       "title": "Pomodoro",
       "icon": "🍅",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "description": "Work in focused blocks with short breaks, the time left counting down in the menu bar.",
       "examples": [
         "Focus: 25 minutes start counting down in the menu bar",
@@ -574,14 +574,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "558702e63d5997ff5e3ed65c191d1e62a593b78693201d312d48e2bb822a2453",
+          "sha256": "c56a40e6c927097105b8fdb78036b28a809325ce890ac63c0cd68f50f86580ec",
           "size": 4300,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "56fa002ba546d25a75d76e7b9674fadae448ef3c86f07cd987bf9a7afc95655c",
-          "size": 13409,
+          "sha256": "f41f1037a23cdde7cfd759e58cd5000ec9a58cfb4ec4c8707d45eef0739e5d9f",
+          "size": 14100,
           "executable": true
         }
       ]
@@ -590,11 +590,11 @@
       "id": "ports",
       "title": "Ports",
       "icon": "🔌",
-      "version": "1.0.1",
+      "version": "1.1.0",
       "description": "Frees a port a forgotten program is holding, when a dev server says the address is already in use.",
       "examples": [
         "Type 3000: the node process holding it; Return quits it",
-        "Cmd+K on it: Force quit, when it won't let go"
+        "On its page, click ✕ beside a port, then Quit: the program lets go and the row goes"
       ],
       "requires": [
         "python3",
@@ -616,14 +616,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "a8f945372fbabe7b3234442b48d4f9efdd9b326d2ed839ac59feaa3e08c9a283",
-          "size": 619,
+          "sha256": "02335df76620d7641d954a57edc488fcb3f847a4fc701f47173507ed77d9c37f",
+          "size": 821,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "d028706948a4729c8f3971493aae25496983172f9f06444c0925a5248df388b6",
-          "size": 5578,
+          "sha256": "37a879847e0479d4dd54ba785f09df6ff4223957cb427f523bd2e76f6306ca87",
+          "size": 6610,
           "executable": true
         }
       ]
@@ -632,11 +632,11 @@
       "id": "ssh-hosts",
       "title": "SSH hosts",
       "icon": "🖥️",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "Connects to a server you named in your SSH config, in a new terminal window, without typing the ssh command.",
       "examples": [
         "Type omar: omarchy with its user and address; Return opens ssh omarchy in Ghostty",
-        "Cmd+K on a host: copy ssh omarchy, or open the config file it came from"
+        "On its page, type omar in the box, then click the host: ssh omarchy opens in Ghostty"
       ],
       "requires": [
         "python3",
@@ -660,14 +660,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "e1c47e20aabf1d5ac383dfa772580bb20f8e5955a8cc187c300ad476983a632b",
-          "size": 879,
+          "sha256": "195863d1fb6f596cc5606ac6916dfb65908ecf131f933c48c400227f43619d13",
+          "size": 1166,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "62b939340bd6d02ce4e3da6737cc0fdf3b1d04a4d0b36bdef6cdc93cbb4a3d42",
-          "size": 6846,
+          "sha256": "5cb45e293f175d84b59870a513aa5832794dc0d44425f2ac277d3168eb21e60d",
+          "size": 9035,
           "executable": true
         }
       ]
@@ -676,7 +676,7 @@
       "id": "summarise",
       "title": "Summarise",
       "icon": "📝",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "description": "Summarises a YouTube video, a web page or a document with Pilot's AI, with its full text beside it. Save it as Markdown to Downloads, or ask about it. Its page takes a pasted link or a chosen file; its menu-bar item summarises what you copied in a click.",
       "examples": [
         "Copy a YouTube link, open Summarise, Return: its page shows the summary and the transcript",
@@ -707,14 +707,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "b9d3aaea4099009ea932fef65d6d6ff5a8c7833b0aae95b8adaf952569e4eca9",
+          "sha256": "4cc190153479955a52180d26ab1d0d1b8fcb5e34a0c7651cb718a7022305f180",
           "size": 1861,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "53053b65b6cc2886b95f20bc71640faa5860b37c7f11c6dab01eeca29783de6d",
-          "size": 34630,
+          "sha256": "78c5bb3c5fb5d35315d9dacab020b6fdb19aa19fd038714d969fe956f74d8c25",
+          "size": 34613,
           "executable": true
         }
       ]
@@ -723,7 +723,7 @@
       "id": "todo",
       "title": "To-do",
       "icon": "☑️",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "description": "A to-do list in Hyper+Space and the menu bar: type to add or filter, Return ticks one off, every other action on a key. Due days are optional: with none set it is one tidy list. Kept on this Mac only, no account and no sync.",
       "examples": [
         "Hyper+Space › To-do, type call mum fri and press Return: added, due Friday, under Upcoming; Return on a to-do ticks it off, ⌘Z puts it back",
@@ -748,14 +748,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "1439b8bc7f2950c88fd22ed057b2730e476d2cba39f8dc1bf5939ec5845e6996",
+          "sha256": "9ec28903e76fda2a5b36009f50c086dee92c5e5b48501e2a7db27476a36f6f37",
           "size": 2292,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "aa0b7374f115d43140304013cead59b7734cd588295213b847c1e8097a0ebbe6",
-          "size": 25148,
+          "sha256": "5802e6b3c5e2d5e97763d80fafa65cb25921123dd4ceda75d51c668def79ab61",
+          "size": 25329,
           "executable": true
         }
       ]
@@ -764,7 +764,7 @@
       "id": "video-downloader",
       "title": "Video downloader",
       "icon": "📥",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "description": "Saves a YouTube, X or Twitch video or its audio to Downloads, through yt-dlp and ffmpeg from Homebrew. Paste a link on its page and pick a format; its menu-bar item shows a download's progress, and a click there saves the copied link.",
       "examples": [
         "Copy a YouTube link, open Video downloader, Return: the video saves to ~/Downloads",
@@ -797,14 +797,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "796c2aa9a6ec7565fc923a65830570fd3046ecc7d7d2fd2c0b2d4e89575dfbec",
+          "sha256": "4fccad44065afaf27d23f97db7afdd71bda864b0e585dd431862a10392c99ef8",
           "size": 1728,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "f61ba248febf42b02352d35f0e0bf9f92d76891d51377688a48df6e84e01627f",
-          "size": 31682,
+          "sha256": "16282207d988a766152429097eef82e05701964950ba959663cc714dd56012f6",
+          "size": 31471,
           "executable": true
         }
       ]
@@ -813,11 +813,11 @@
       "id": "weather",
       "title": "Weather",
       "icon": "🌤️",
-      "version": "1.2.0",
-      "description": "The temperature now in the menu bar; click it for feels like, high and low, rain chance, wind, the next hours and the next 7 days. Free data from Open-Meteo, no account or key.",
+      "version": "1.3.0",
+      "description": "The temperature now in the menu bar; click it for feels like, high and low, rain chance, wind, the next hours and the next 7 days, and search its city on its page. Free data from Open-Meteo, no account or key.",
       "examples": [
         "The menu bar shows ☀️ 24°: click it for the next six hours and the week ahead",
-        "Type weather: now, the next hours and 7 days in one view; Cmd+K refreshes it"
+        "On its page, type a city in Place and click it: the menu bar and the page show that city's weather"
       ],
       "requires": [
         "python3",
@@ -842,14 +842,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "93ca6d579ca024d179fb99d5f5144e4056c7b85610ee063a6f492d4853ee6113",
-          "size": 1701,
+          "sha256": "a5ac85bfa8ec03d9bb9f7e7b11d279d8def7206ad4df3e7ad61cd35dae091fd9",
+          "size": 2028,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "deb7d108462f130d29d7b610c53b98b0497dbe9d8a7032c692df2291fbdc5055",
-          "size": 26671,
+          "sha256": "6a798f401e799315ee4c505503daccf234de7d5067f8ead8ea71fa73af57942e",
+          "size": 32508,
           "executable": true
         }
       ]

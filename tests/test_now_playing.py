@@ -215,6 +215,22 @@ class NowPlayingTests(ExtensionTestCase):
     def test_nothing_played_popover_says_so(self):
         self.assertIn("Nothing is playing", self.popover()[0]["text"])
 
+    # ---- the page (Sven, 2026-10-31: it does its job in place) ----
+
+    def test_the_page_has_the_track_its_controls_and_show(self):
+        self.scene(now=playing())
+        message = self.blocks_message("page", "page")
+        self.assertEqual(message["refresh"], 5)
+        self.assertEqual(self.row(message["blocks"])["title"], "Voyager")
+        actions = self.actions(message["blocks"])
+        self.assertEqual([a["title"] for a in actions], ["⏸︎ Pause", "⏮︎", "⏭︎", "♡ Favourite", "Show in Music"])
+        self.assertEqual([a.get("command") for a in actions], ["playpause", "previous", "next", "favourite", "show"])
+
+    def test_the_page_with_nothing_played_says_so_and_asks_less_often(self):
+        message = self.blocks_message("page", "page")
+        self.assertIn("Nothing is playing", message["blocks"][0]["text"])
+        self.assertEqual(message["refresh"], 15)
+
     # ---- the controls ----
 
     def test_next_sends_now_playing_its_command_and_says_what_plays(self):
