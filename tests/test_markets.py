@@ -134,6 +134,7 @@ class MarketsCase(ExtensionTestCase):
             body += ('case "$url" in\n'
                      '  *symbol-search.tradingview.com/*) f=tv-search;;\n'
                      '  *scanner.tradingview.com/global/scan) f=tv-global;; *scanner.tradingview.com/crypto/scan) f=tv-crypto;;\n'
+                     '  */market_chart*) f=coin-chart;; */historical\\?*) f=nasdaq-history;; *frankfurter.dev/v1/*..*) f=fx-series;;\n'
                      '  *api.nasdaq.com/api/quote/*) s=${url#*/api/quote/}; s=${s%%%%/*}; f="nasdaq-$s-${url##*assetclass=}";;\n'
                      '  *coins/markets*) f=markets;; *api/v3/search*) f=search;; *frankfurter*) f=fx;; *) f=none;;\n'
                      'esac\n'
@@ -590,6 +591,93 @@ class SearchTests(MarketsCase):
         self.bar(preferences={"symbols": " ".join("S%d" % i for i in range(12))})
         result = self.add(EURUSD, preferences={"symbols": " ".join("S%d" % i for i in range(12))})
         self.assertEqual(result.of_type("error")[0]["text"], "follows 12 symbols at most: remove one first")
+
+
+def widget_row(ticker, close, change, change_abs, high, low, description, currency, kind, ranges):
+    """A screener row with the widget's columns: the day's, then Perf.W, Perf.1M, Perf.Y and each span's high and low."""
+    row = tv(ticker, ticker.split(":")[1], close, change, change_abs, high, low, description, currency, kind)
+    (w, m, y), (wh, wl, mh, ml, yh, yl) = ranges
+    return dict(row, d=row["d"] + [w, m, y, wh, wl, mh, ml, yh, yl])
+
+
+WIDGET_ROWS = [widget_row("BITSTAMP:BTCUSD", 77907.05, 0.62, 480.0, 78500.0, 77000.0, "Bitcoin / U.S. dollar", "USD", "spot",
+                          ((-3.6, -8.2, -28.8), (81971.0, 76325.98, 86968.58, 76172.75, 110750.0, 57800.19))),
+               widget_row("NASDAQ:AAPL", 344.63, -1.23, -4.29, 349.19, 334.35, "Apple Inc.", "USD", "stock",
+                          ((-1.28, 4.18, 26.7), (351.43, 334.35, 351.73, 325.81, 351.73, 243.42))),
+               widget_row("FX:EURUSD", 1.11574, -0.2, -0.0022, 1.1189, 1.1150, "Euro / U.S. Dollar", "USD", "forex",
+                          ((-0.51, -1.52, -3.52), (1.12266, 1.11043, 1.12853, 1.11043, 1.20828, 1.11043))),
+               widget_row("SP:SPX", 7580.07, -1.82, -140.4, 7700.0, 7560.0, "S&P 500 Index", None, "index",
+                          ((-0.75, -1.42, 10.49), (7758.43, 7527.56, 7844.52, 7527.56, 7844.52, 6316.91)))]
+# Recorded on 2026-11-01 for the same asks, trimmed: CoinGecko's month of BTC, Nasdaq's month of AAPL closes, the ECB's
+# month of EURUSD.
+COIN_CHART = {"prices": [[1790974800000 + i * 3600000, 84428.5 - i * 20] for i in range(300)], "market_caps": [], "total_volumes": []}
+NASDAQ_HISTORY = {"data": {"symbol": "AAPL", "totalRecords": 3, "tradesTable": {"asOf": None, "headers": {}, "rows": [
+    {"date": "10/30/2026", "close": "$344.63", "volume": "67,841,560", "open": "$346.715", "high": "$349.19", "low": "$334.35"},
+    {"date": "10/29/2026", "close": "$348.92", "volume": "51,002,100", "open": "$347.10", "high": "$350.00", "low": "$345.20"},
+    {"date": "10/01/2026", "close": "$333.69", "volume": "48,113,900", "open": "$332.00", "high": "$335.10", "low": "$330.80"}]}},
+    "message": None, "status": {"rCode": 200}}
+FX_SERIES = {"amount": 1.0, "base": "EUR", "start_date": "2026-10-01", "end_date": "2026-10-30",
+             "rates": {"2026-10-01": {"USD": 1.1225}, "2026-10-15": {"USD": 1.1208}, "2026-10-30": {"USD": 1.1172}}}
+WIDGET_SYMBOLS = [{"kind": "pair", "symbol": "BTCUSD", "listing": "BITSTAMP:BTCUSD"},
+                  {"kind": "stock", "symbol": "AAPL", "listing": "NASDAQ:AAPL"},
+                  {"kind": "pair", "symbol": "EURUSD", "listing": "FX:EURUSD"},
+                  {"kind": "pair", "symbol": "SPX", "listing": "SP:SPX"}]
+KEYS = ["pair:BITSTAMP:BTCUSD", "stock:NASDAQ:AAPL", "pair:FX:EURUSD", "pair:SP:SPX"]
+
+
+class WidgetTests(MarketsCase):
+    """Pilot's Markets widget (Pilot P83): its symbols in the run's context, one screener call for every quote and its
+    ranges, a line from the free source that keeps one, and TradingView's search."""
+
+    def setUp(self):
+        super().setUp()
+        for name, body in {"tv-global": {"totalCount": 4, "data": WIDGET_ROWS}, "coin-chart": COIN_CHART,
+                           "nasdaq-history": NASDAQ_HISTORY, "fx-series": FX_SERIES}.items():
+            (self.fixtures / (name + ".json")).write_text(json.dumps(body))
+
+    def answer(self, **context):
+        result = self.run_ext("widget", context=context)
+        self.assertEqual(result.of_type("error"), [], result.stdout)
+        return result.of_type("data")[0]["data"]
+
+    def test_one_call_prices_every_symbol_with_its_ranges_and_lines_come_where_history_is_free(self):
+        data = self.answer(symbols=WIDGET_SYMBOLS, range="1M", lines=KEYS)
+        self.assertEqual(sorted(data["quotes"]), sorted(KEYS))
+        btc, aapl = data["quotes"]["pair:BITSTAMP:BTCUSD"], data["quotes"]["stock:NASDAQ:AAPL"]
+        self.assertEqual((btc["price"], btc["asset"], btc["currency"], btc["type"]), (77907.05, "coin", "USD", "spot"))
+        self.assertEqual(aapl["ranges"]["1M"], {"percent": 4.18, "high": 351.73, "low": 325.81})
+        self.assertEqual(data["quotes"]["pair:SP:SPX"]["ranges"]["1Y"], {"percent": 10.49, "high": 7844.52, "low": 6316.91})
+        self.assertEqual(self.asked(), ["AAPL/stocks", "fx", "market_chart", "tv-global-tickers"], "Nasdaq's history of AAPL")
+        self.assertIn('"Perf.1M"', next(a for h, _, _, a in self.calls() if h == "scanner.tradingview.com"))
+        lines = data["lines"]
+        self.assertEqual(len(lines["pair:BITSTAMP:BTCUSD"]), 120, "cut to the chart's points, the latest kept")
+        self.assertEqual(lines["pair:BITSTAMP:BTCUSD"][-1][1], 84428.5 - 299 * 20)
+        self.assertEqual([p[1] for p in lines["stock:NASDAQ:AAPL"]], [333.69, 348.92, 344.63], "oldest first")
+        self.assertEqual([p[1] for p in lines["pair:FX:EURUSD"]], [1.1225, 1.1208, 1.1172])
+        self.assertEqual(data["errors"], {"pair:SP:SPX": "no free history for SP:SPX"})
+        chart = next(q for h, p, q, _ in self.calls() if p.endswith("/market_chart"))
+        self.assertEqual(chart, {"vs_currency": "usd", "days": "30"})
+
+    def test_a_currency_pairs_day_has_no_line_and_a_quote_alone_asks_no_history(self):
+        data = self.answer(symbols=WIDGET_SYMBOLS, range="1D", lines=["pair:FX:EURUSD"])
+        self.assertEqual((data["lines"], data["errors"]), ({}, {"pair:FX:EURUSD": "no history for EURUSD over 1D"}))
+        self.assertEqual(self.asked(), ["tv-global-tickers"])
+        self.assertEqual(self.answer(symbols=WIDGET_SYMBOLS[:1])["lines"], {})
+
+    def test_offline_every_symbol_says_why(self):
+        self.fake_curl(fail="(6) Could not resolve host: scanner.tradingview.com")
+        data = self.answer(symbols=WIDGET_SYMBOLS[:2], range="1W", lines=KEYS[:1])
+        self.assertEqual(data["quotes"], {})
+        self.assertEqual(sorted(data["errors"]), KEYS[:2])
+        self.assertTrue(data["errors"]["stock:NASDAQ:AAPL"].startswith("TradingView: (6) Could not resolve host"))
+
+    def test_search_answers_listings_and_an_empty_one_asks_nothing(self):
+        found = self.answer(search="btc")["found"]
+        self.assertEqual([f["key"] for f in found], ["pair:BITSTAMP:BTCUSD", "pair:COINBASE:BTCUSD", "pair:INDEX:BTCUSD",
+                                                    "pair:CME:BTC1!", "stock:AMEX:BTC", "stock:LSE:BTC"])
+        self.assertEqual((found[0]["name"], found[0]["where"], found[0]["type"]), ("Bitcoin / U.S. dollar", "Bitstamp", "spot"))
+        self.assertEqual(self.answer(search=" ")["found"], [])
+        self.assertEqual(len(self.calls()), 1)
 
 
 class MarketWords(unittest.TestCase):

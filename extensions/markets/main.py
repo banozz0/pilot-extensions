@@ -519,16 +519,16 @@ def tv_quote(ticker, row, coin):
             "currency": str(d.get("currency") or "").upper() or None}
 
 
-def scan(market, body):
+def scan(market, body, columns=TV_COLUMNS):
     """The screener's rows for `body` on `market` (global, crypto) as [(ticker, row)], in its order; or (None, why)."""
-    answer, error = curl(SCANNER % market, body=dict(body, columns=TV_COLUMNS))
+    answer, error = curl(SCANNER % market, body=dict(body, columns=columns))
     if error:
         return None, "TradingView: %s" % error
     rows = answer.get("data") if isinstance(answer, dict) else None
     if not isinstance(rows, list):
         return None, "TradingView: its answer did not read"
     return [(r["s"], r["d"]) for r in rows if isinstance(r, dict) and isinstance(r.get("s"), str)
-            and isinstance(r.get("d"), list) and len(r["d"]) == len(TV_COLUMNS)], None
+            and isinstance(r.get("d"), list) and len(r["d"]) == len(columns)], None
 
 
 def tv_market(market, asks, pick, coin):
@@ -1365,6 +1365,185 @@ def refresh(run):
     send({"type": "hud", "text": "Markets: %s" % board.summary()})
 
 
+# ---- Pilot's Markets widget ----
+# Pilot's own desktop widget (Pilot P83) asks through `widget`, a hidden no-view command, and draws the answer itself:
+# its symbols are TradingView listings picked by this extension's search, handed in the run's context, never the
+# watchlist. One screener call prices them all, with each range's change, high and low; a range's line comes from a
+# free source where one keeps history (coins: CoinGecko; US stocks and ETFs: Nasdaq; ECB currencies: Frankfurter, by
+# day). It answers one `{"type": "data"}` line, which Pilot alone reads (an older Pilot skips the type), and keeps
+# nothing but the coin ids found, so the menu bar's answers and the widget's never touch.
+
+WIDGET_COLUMNS = TV_COLUMNS + ["Perf.W", "Perf.1M", "Perf.Y", "High.5D", "Low.5D", "High.1M", "Low.1M",
+                               "price_52_week_high", "price_52_week_low"]
+RANGES = {"1D": 1, "1W": 7, "1M": 30, "1Y": 365}  # a range key and the days its line spans
+RANGE_COLUMNS = {"1W": ("Perf.W", "High.5D", "Low.5D"), "1M": ("Perf.1M", "High.1M", "Low.1M"),
+                 "1Y": ("Perf.Y", "price_52_week_high", "price_52_week_low")}
+LINE_POINTS = 120  # a chart's line, at most
+WIDGET_TIMEOUT = 8  # each call's; the lines are asked side by side, so a run ends well inside Pilot's 30 s
+US_EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "ARCA", "NYSEARCA", "BATS", "CBOE"}  # listings Nasdaq keeps a history of
+# The money a coin pair is quoted in, longest first (USDT before USD), and CoinGecko's name for it.
+COIN_MONEY = [("USDT", "usd"), ("USDC", "usd"), ("FDUSD", "usd"), ("USD", "usd"), ("EUR", "eur"), ("GBP", "gbp"),
+              ("CHF", "chf"), ("JPY", "jpy"), ("BTC", "btc"), ("ETH", "eth")]
+COIN_CHART = "https://api.coingecko.com/api/v3/coins/%s/market_chart?%s"
+NASDAQ_HISTORY = "https://api.nasdaq.com/api/quote/%s/historical?%s"
+FX_SERIES = "https://api.frankfurter.dev/v1/%s..?%s"
+
+
+def widget_quote(ticker, row):
+    """A screener row with the widget's columns as Pilot reads it: the day's quote, its listing's type and exchange, and
+    for 1W, 1M and 1Y the change in percent with that span's high and low."""
+    made = tv_quote(ticker, row[:len(TV_COLUMNS)], False)
+    if not made:
+        return None
+    d = dict(zip(WIDGET_COLUMNS, row))
+    made["type"] = str(d.get("type") or "")
+    made["exchange"] = ticker.split(":")[0]
+    if made["type"] in ("spot", "crypto"):
+        made["asset"] = "coin"
+    made["ranges"] = {span: {"percent": number(d.get(p)), "high": number(d.get(h)), "low": number(d.get(lo))}
+                      for span, (p, h, lo) in RANGE_COLUMNS.items()}
+    return made
+
+
+def coin_line(name, span, names):
+    """(a coin pair's line over `span`, [[seconds, price]], None) or (None, why), from CoinGecko in the pair's money."""
+    for money, gecko in COIN_MONEY:
+        if name.endswith(money) and len(name) > len(money):
+            break
+    else:
+        return None, "no history for %s" % name
+    cid, error = coin_id(name[:-len(money)], names)
+    if error:
+        return None, error
+    answer, error = curl(COIN_CHART % (quote(cid, safe=""), urlencode({"vs_currency": gecko, "days": RANGES[span]})),
+                         timeout=WIDGET_TIMEOUT)
+    if error:
+        return None, "CoinGecko: %s" % error
+    prices = answer.get("prices") if isinstance(answer, dict) else None
+    points = [[p[0] / 1000.0, number(p[1])] for p in prices or [] if isinstance(p, list) and len(p) == 2
+              and isinstance(p[0], (int, float))]
+    return [p for p in points if p[1] is not None], None
+
+
+def nasdaq_line(name, asset, span, now):
+    """(a US stock's or fund's line over `span`, None) or (None, why): the day's minutes of its last session for 1D, else
+    a close a day."""
+    kind = "etf" if asset == "etf" else "stocks"
+    if span == "1D":
+        answer, error = curl(NASDAQ % (quote(name, safe=""), kind), browser=True, timeout=WIDGET_TIMEOUT)
+        data = answer.get("data") if isinstance(answer, dict) else None
+        if error or not isinstance(data, dict):
+            return None, "Nasdaq: %s" % (error or "no chart for %s" % name)
+        points = [[p["x"] / 1000.0, number(p.get("y"))] for p in data.get("chart") or []
+                  if isinstance(p, dict) and isinstance(p.get("x"), (int, float))]
+        points = [p for p in points if p[1] is not None]
+        hours = session(ny_day(points[-1][0])) if points else None
+        regular = [p for p in points if hours and hours[0] <= p[0] <= hours[1]]
+        return regular or points, None
+    since = datetime.fromtimestamp(now, NEW_YORK).date() - timedelta(days=RANGES[span])
+    answer, error = curl(NASDAQ_HISTORY % (quote(name, safe=""), urlencode({"assetclass": kind, "fromdate": since.isoformat(),
+                                                                             "limit": 400})),
+                         browser=True, timeout=WIDGET_TIMEOUT)
+    rows = (((answer or {}).get("data") or {}).get("tradesTable") or {}).get("rows") if isinstance(answer, dict) else None
+    if error or not isinstance(rows, list):
+        return None, "Nasdaq: %s" % (error or "no history for %s" % name)
+    points = []
+    for row in rows:
+        try:
+            day = datetime.strptime(str(row.get("date")), "%m/%d/%Y").replace(hour=16, tzinfo=NEW_YORK)
+        except (AttributeError, ValueError):
+            continue
+        close = number(row.get("close"))
+        if close is not None:
+            points.append([day.timestamp(), close])
+    return sorted(points), None
+
+
+def fx_line(name, span, now):
+    """(a currency pair's line over `span`, a rate a working day, None) or (None, why): the ECB's rates keep no day."""
+    if span == "1D" or len(name) != 6:
+        return None, "no history for %s over %s" % (name, span)
+    since = datetime.fromtimestamp(now, timezone.utc).date() - timedelta(days=RANGES[span])
+    answer, error = curl(FX_SERIES % (since.isoformat(), urlencode({"base": name[:3], "symbols": name[3:]})), timeout=WIDGET_TIMEOUT)
+    rates = answer.get("rates") if isinstance(answer, dict) else None
+    if error or not isinstance(rates, dict):
+        return None, "Frankfurter: %s" % (error or "no %s rates" % name)
+    points = []
+    for day, values in sorted(rates.items()):
+        try:
+            stamp = datetime.strptime(day, "%Y-%m-%d").replace(hour=16, tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            continue
+        rate = number((values or {}).get(name[3:])) if isinstance(values, dict) else None
+        if rate is not None:
+            points.append([stamp, rate])
+    return points, None
+
+
+def widget_line(symbol, made, span, names, now):
+    """(`symbol`'s line over `span`, cut to LINE_POINTS, None) or (None, why) when no free source keeps its history."""
+    exchange, _, name = symbol["listing"].rpartition(":")
+    asset = (made or {}).get("asset") or asset_of(symbol)
+    if asset == "coin":
+        points, error = coin_line(name, span, names)
+    elif asset in ("stocks", "etf") and exchange in US_EXCHANGES:
+        points, error = nasdaq_line(name, asset, span, now)
+    elif asset == "forex":
+        points, error = fx_line(name, span, now)
+    else:
+        return None, "no free history for %s" % symbol["listing"]
+    if error or not points:
+        return None, error or "no history for %s" % symbol["listing"]
+    return thin(points, LINE_POINTS), None
+
+
+def widget(run):
+    """The widget's ask, in its context: `{"search": text}` answers the listings found; else `{"symbols": [listed
+    symbols], "range": "1D", "lines": [keys]}` answers every symbol's quote and, for the keys in `lines`, its line over
+    the range; a symbol that failed says why under `errors`."""
+    asked = context(run)
+    if isinstance(asked.get("search"), str):
+        text, kind = search_words(asked["search"])
+        found, error = search(text, kind, WIDGET_TIMEOUT) if text.strip() else ([], None)
+        if error:
+            send({"type": "error", "text": error})
+        else:
+            send({"type": "data", "data": {"found": found[:FOUND_ROWS]}})
+        return
+    symbols = [e for e in map(entry, asked.get("symbols") or []) if e and e["listing"]][:MOST]
+    span = asked.get("range") if asked.get("range") in RANGES else "1D"
+    wanted = {k for k in asked.get("lines") or [] if isinstance(k, str)}
+    folder = cache_dir(run)
+    names = load(folder, NAMES)
+    known = dict(names)
+    quotes, lines, errors = {}, {}, {}
+    if symbols:
+        rows, error = scan("global", {"symbols": {"tickers": sorted({s["listing"] for s in symbols})}}, WIDGET_COLUMNS)
+        by_ticker = dict(rows or [])
+        for s in symbols:
+            made = widget_quote(s["listing"], by_ticker[s["listing"]]) if s["listing"] in by_ticker else None
+            if made:
+                quotes[s["key"]] = made
+            else:
+                errors[s["key"]] = error or "TradingView knows no %s" % s["listing"]
+    drawn = [s for s in symbols if s["key"] in wanted]
+    if drawn:
+        from concurrent.futures import ThreadPoolExecutor  # the widget's alone: a view never pays for it
+
+        now = time.time()
+        with ThreadPoolExecutor(max_workers=min(len(drawn), 6)) as pool:
+            jobs = {s["key"]: pool.submit(widget_line, s, quotes.get(s["key"]), span, names, now) for s in drawn}
+            for key, job in jobs.items():
+                points, error = job.result()
+                if points:
+                    lines[key] = points
+                else:
+                    errors.setdefault(key, error)
+    if names != known:
+        save(folder, NAMES, names)
+    send({"type": "data", "data": {"range": span, "quotes": quotes, "lines": lines, "errors": errors}})
+
+
 def main():
     if sys.argv[1:] == ["--refresh"]:
         refresh_main()
@@ -1376,7 +1555,7 @@ def main():
         return
     command = run.get("command")
     view = {"markets": listing, "bar": bar, "page": page, "refresh": refresh, "search": search_list, "find": find,
-            "clear-search": clear_search, "add": follow, "remove": unfollow, "move": move}.get(command)
+            "clear-search": clear_search, "add": follow, "remove": unfollow, "move": move, "widget": widget}.get(command)
     if view:
         view(run)
     else:
