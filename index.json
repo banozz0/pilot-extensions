@@ -202,7 +202,7 @@
       "id": "ghostex",
       "title": "Ghostex sessions",
       "icon": "👻",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "description": "See which Ghostex agents are working or waiting on you from the menu bar, read a session's chat and reply to it, and rename, tag, sleep, wake or close sessions without opening Ghostex.",
       "examples": [
         "The menu bar shows 👻 5: click it, pick Pilot coordinator 2, read its last replies and type an answer; Return queues it until the agent stops, Option+Return interrupts",
@@ -228,14 +228,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "df8eb4aeb6c36d9c6086ce19309e6c8bbaa047e30c59ef5c0f8ff21d1831c7ba",
-          "size": 2130,
+          "sha256": "b120ebf1782a76bc2a64303fe5373f22a71e254d27daa6bb1ff881fb7949beb5",
+          "size": 2850,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "300944f0a5415b3295ae15474a58a49e4e106ebf28626b6f486b36339d6d4d76",
-          "size": 30179,
+          "sha256": "75b1e6a6575458f9c8038f0e3ff4f53859ea05b64ec91f407734e70f721f527c",
+          "size": 32147,
           "executable": true
         }
       ]

@@ -30,11 +30,12 @@ def sessions():
             "sessions": [
                 session("S1:P1:G1", "Asleep long ago", "pilot", "sleep", age=86400 * 3),
                 session("S1:P1:G2", "Idle one", "pilot", "running", age=600, sessionTag="testing"),
-                session("S1:P2:G3", "Busy build", "agents", "running", "working", age=5, queuedPromptCount=2),
+                session("S1:P2:G3", "Busy build", "agents", "running", "working", age=5, queuedPromptCount=2,
+                        coordinatorRole="thread", coordinatorSessionId="G5"),
                 session("S1:P1:G4", "Design pass", "pilot", "running", "working", agent="custom-designer-x1", age=30,
-                        sessionTag="custom-abcd1"),
+                        sessionTag="custom-abcd1", coordinatorRole="thread", coordinatorSessionId="G5"),
                 session("S1:P2:G5", "Needs an answer", "agents", "running", pendingQuestionCount=1, age=120,
-                        sessionTag="testing"),
+                        sessionTag="testing", coordinatorRole="coordinator"),
                 session("S1:P3:G6", "old-terminal", "dotfiles", "unknown", kind="terminal", age=86400 * 30),
                 session("S1:P1:G7", "Parked", "pilot", "sleep", isParked=True, age=86400 * 9, sessionTag="done"),
                 {"title": "no ref, skipped"},
@@ -179,6 +180,36 @@ class GhostexTests(ExtensionTestCase):
         hide.start()
         self.addCleanup(hide.stop)
         self.assertIn("ghostex is not installed", self.items()[0]["subtitle"])
+
+    def test_show_keeps_orchestrators_or_one_agent_in_the_list(self):
+        def titles(show):
+            return [i["title"] for i in self.items(preferences={"show": show})]
+        self.assertEqual(titles("coordinator"), ["Needs an answer"])
+        self.assertEqual(titles("designer"), ["Design pass"])
+        self.assertEqual(titles("claude"), ["Needs an answer", "Busy build", "Idle one", "Asleep long ago", "Parked"])
+        self.assertEqual(titles("all"), [i["title"] for i in self.items()])
+        none = self.items(preferences={"show": "codex"})
+        self.assertEqual([(i["title"], i["icon"]) for i in none], [("No Codex sessions in Ghostex", "👻")])
+
+    def test_show_narrows_the_bar_popover_and_page_alike(self):
+        orchestrators = {"show": "coordinator"}
+        self.assertEqual((self.bar(preferences=orchestrators)["text"]), "👻 1")
+        self.assertEqual([(b.get("title"), [i["title"] for i in b["items"]]) for b in self.popover(preferences=orchestrators)],
+                         [("Need you", ["Needs an answer"])])
+        blocks = self.page(preferences=orchestrators)
+        self.assertEqual([s["value"] for s in blocks[0]["items"]], ["1", "0", "0", "0"])
+        self.assertEqual([(b["title"], [i["title"] for i in b["items"]]) for b in blocks[1:]],
+                         [("agents", ["Needs an answer"])])
+        codex = {"show": "codex"}
+        self.assertEqual(self.bar(preferences=codex)["text"], "👻")
+        self.assertEqual(self.popover(preferences=codex), [{"type": "markdown", "text": "No Codex session is awake."}])
+        self.assertEqual(self.page(preferences=codex)[-1],
+                         {"type": "markdown", "text": "No Codex sessions. Show, in the extension's settings, picks which."})
+
+    def test_a_reply_reaches_a_session_show_leaves_out(self):
+        r = self.run_ext("send", context={"ref": "S1:P1:G2"}, input="hi", preferences={"show": "codex"})
+        self.assertEqual(self.writes(), [["send-session-chat-message", "--session-id=S1:P1:G2", "--text=hi", "--json"]])
+        self.assertEqual(r.of_type("hud")[0]["text"], "Sent")
 
     # ---- bar and popover ----
 

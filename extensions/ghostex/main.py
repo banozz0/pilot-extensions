@@ -6,7 +6,9 @@
 The list is `ghostex sessions --json --full`, read only, which answers in about 0.2 s, so it is asked on every open
 under a deadline inside Pilot's limits and never cached. A session is named to the CLI by its globalRef (S..:P..:G..),
 checked against REF, so a context can never say `all` and nothing ever acts on more than that one session; free text
-(a reply, a title, a tag) always goes as `--flag=value`, so it can never read as a flag or as --help.
+(a reply, a title, a tag) always goes as `--flag=value`, so it can never read as a flag or as --help. The Show setting
+narrows what the list, the bar and the page show to orchestrators (Ghostex's coordinatorRole) or one agent (agentId);
+an action still finds its session among them all.
 
 A row pushes its chat: `read-session-chat <ref> --limit 200 --json`, folded to the last six messages, tool work in one
 grey line, Sven's own last message always first among them, asked again every 2 s while it shows. When the same chat was read under LONG_POLL_WINDOW s ago (so it is
@@ -48,6 +50,10 @@ TAGS = ["favorite", "high-priority", "low-priority", "todo", "research", "in-pro
 SENDER = "\n\nMessage from another agent\n"
 HARNESS = ("<task-notification>", "<system-reminder>", "<command-name>", "<local-command", "<bash-")
 AGENTS = {"claude": "Claude", "codex": "Codex", "hermes-agent": "Hermes"}
+# The Show setting's choices besides "all": "coordinator" is Ghostex's coordinatorRole, any other value an agentId or
+# the name of a custom agent (designer, reviewer, content), whose agentId Ghostex suffixes per install.
+SHOW = {"coordinator": "orchestrator", "claude": "Claude Code", "codex": "Codex", "hermes-agent": "Harry",
+        "designer": "designer", "reviewer": "reviewer", "content": "content"}
 State = namedtuple("State", "order icon words label badge tone")
 # Each state's place in the list (what needs Sven first), icon, words in Hyper+Space, label in the popover and the page's
 # stats, badge and tone.
@@ -156,20 +162,44 @@ def ago(seconds, suffix=" ago"):
             return "%d %s%s" % (seconds // size, unit, suffix)
 
 
-def read_sessions(timeout):
-    """[(session, state, idle seconds)] in the list's order (what needs Sven first, then the latest), and the agents'
-    names; or why there are none."""
+def shows(session, show, names):
+    """Whether the Show setting (show_of's) keeps the session."""
+    if show == "all":
+        return True
+    if show == "coordinator":
+        return session.get("coordinatorRole") == "coordinator"
+    agent = session.get("agentId")
+    return agent == show or names.get(agent) == show
+
+
+def show_of(run):
+    show = (run.get("preferences") or {}).get("show")
+    return show if show in SHOW else "all"
+
+
+def kind_of(show, many=False):
+    """What the Show setting keeps, in words: "session", "orchestrators", "Codex session"…"""
+    if show == "coordinator":
+        return "orchestrators" if many else "orchestrator"
+    noun = "sessions" if many else "session"
+    return noun if show == "all" else "%s %s" % (SHOW[show], noun)
+
+
+def read_sessions(timeout, show="all"):
+    """[(session, state, idle seconds)] the Show setting keeps, in the list's order (what needs Sven first, then the
+    latest), and the agents' names; or why there are none."""
     answer, error = ghostex(["sessions", "--json", "--full"], timeout)
     if error:
         return None, None, error
     sessions = answer.get("sessions") if isinstance(answer, dict) else None
     if not isinstance(sessions, list):
         return None, None, "ghostex sessions gave no session list"
-    now = time.time()
+    now, names = time.time(), agent_names(answer)
     rows = [(s, state_of(s), seconds_since(s.get("lastInteractionAt") or s.get("updatedAt"), now)) for s in sessions
-            if isinstance(s, dict) and isinstance(s.get("globalRef"), str) and REF.match(s["globalRef"])]
+            if isinstance(s, dict) and isinstance(s.get("globalRef"), str) and REF.match(s["globalRef"])
+            and shows(s, show, names)]
     rows.sort(key=lambda r: (STATES[r[1]].order, float("inf") if r[2] is None else r[2]))
-    return rows, agent_names(answer), None
+    return rows, names, None
 
 
 def find_session(ref, timeout=ACTION_TIMEOUT):
@@ -220,8 +250,9 @@ def unavailable(error):
 class Board:
     """The sessions as one surface draws them: rows, the tag choices, the counts."""
 
-    def __init__(self, surface):
-        self.rows, self.names, self.error = read_sessions(left(surface))
+    def __init__(self, surface, show="all"):
+        self.show = show
+        self.rows, self.names, self.error = read_sessions(left(surface), show)
         # The bar skips Sven's custom tags: its rows only stand in until the popover answers.
         custom = custom_tags() if surface != "bar" and not self.error else []
         self.tag_titles = dict([(t, t.replace("-", " ").capitalize()) for t in TAGS] + custom)
@@ -288,7 +319,7 @@ class Board:
             if items:
                 blocks.append({"type": "list", "title": STATES[state].label, "items": items})
         if not blocks:
-            blocks.append({"type": "markdown", "text": "No session is awake."})
+            blocks.append({"type": "markdown", "text": "No %s is awake." % kind_of(self.show)})
         if self.count["asleep"]:
             blocks.append({"type": "list", "items": [{"title": "%d asleep ›" % self.count["asleep"], "icon": "💤",
                                                       "actions": [{"type": "push", "command": "asleep",
@@ -312,15 +343,19 @@ class Board:
         for project, items in projects.items():
             blocks.append({"type": "list", "title": project or "No project", "items": items[:MOST_ROWS]})
         if not self.rows:
-            blocks.append({"type": "markdown", "text": "No Ghostex sessions. Start an agent in Ghostex and it shows here."})
+            text = ("No Ghostex sessions. Start an agent in Ghostex and it shows here." if self.show == "all" else
+                    "No %s. Show, in the extension's settings, picks which." % kind_of(self.show, True))
+            blocks.append({"type": "markdown", "text": text})
         return blocks
 
 
 # ---- Hyper+Space ----
 
-def list_sessions():
-    """Every session as a row; Return focuses it in Ghostex (waking it first when asleep), ⋯ sleeps or wakes it."""
-    rows, names, error = read_sessions(left(None))
+def list_sessions(run):
+    """Every session the Show setting keeps as a row; Return focuses it in Ghostex (waking it first when asleep), ⋯
+    sleeps or wakes it."""
+    show = show_of(run)
+    rows, names, error = read_sessions(left(None), show)
     if error:
         send({"type": "list", "items": [{"title": "Ghostex sessions are not available", "subtitle": error, "icon": "⚠️"}]})
         return
@@ -339,8 +374,11 @@ def list_sessions():
         items.append({"id": ref, "title": title_of(s), "icon": STATES[state].icon, "actions": actions,
                       "subtitle": " · ".join(x for x in (project, agent, words, ago(idle_for)) if x),
                       "keywords": " ".join(x for x in (project, agent or "", STATES[state].words, str(s.get("alias") or "")) if x)})
-    if not items:
+    if not items and show == "all":
         items = [{"title": "No Ghostex sessions", "subtitle": "Start an agent in Ghostex and it shows here", "icon": "👻"}]
+    elif not items:
+        items = [{"title": "No %s in Ghostex" % kind_of(show, True), "icon": "👻",
+                  "subtitle": "Show, in the extension's settings, picks which sessions this lists"}]
     send({"type": "list", "items": items})
 
 
@@ -350,7 +388,7 @@ def bar(run):
     """The bar item: the ghost and how many sessions work, amber with how many need an answer; a click (surface
     popover) asks the same command for the grouped sessions."""
     surface = run.get("surface")
-    board = Board(surface)
+    board = Board(surface, show_of(run))
     if surface == "popover":
         send({"type": "blocks", "blocks": board.popover()})
         return
@@ -364,13 +402,13 @@ def bar(run):
     send(line)
 
 
-def page():
-    send({"type": "blocks", "blocks": Board("page").page()})
+def page(run):
+    send({"type": "blocks", "blocks": Board("page", show_of(run)).page()})
 
 
 def asleep(run):
     """The sleeping sessions, pushed from the popover's "N asleep ›"."""
-    board = Board(run.get("surface") or "popover")
+    board = Board(run.get("surface") or "popover", show_of(run))
     if board.error:
         blocks = board.popover()
     else:
@@ -598,7 +636,7 @@ def lifecycle(verb, failing, done):
     return run_it
 
 
-VIEWS = {"sessions": lambda run: list_sessions(), "bar": bar, "page": lambda run: page(), "asleep": asleep, "chat": chat}
+VIEWS = {"sessions": list_sessions, "bar": bar, "page": page, "asleep": asleep, "chat": chat}
 # Each acts on the one session its context's ref names, refused before anything runs without one.
 WRITES = {"send": reply, "rename": rename, "tag": tag, "focus": focus,
           "sleep": lifecycle("sleep", "could not sleep it", "Session asleep"),
