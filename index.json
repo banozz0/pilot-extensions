@@ -723,11 +723,11 @@
       "id": "tailscale",
       "title": "Tailscale",
       "icon": "🛜",
-      "version": "1.1.0",
-      "description": "See which of your Tailscale devices are online and copy a device's Tailscale IP or name without opening the Tailscale menu, from Hyper+Space, its own page or the menu bar.",
+      "version": "1.2.0",
+      "description": "See which of your Tailscale devices are online, copy a device's Tailscale IP or name, and connect or disconnect Tailscale without opening its menu, from Hyper+Space, its own page or the menu bar.",
       "examples": [
         "Type pi: your Raspberry Pi with its OS, IP and whether it is online; Return copies its 100.x IP",
-        "Glance at the menu bar: 🛜 3 says three devices are online; click it for the list, online first, each with its IP, and when an offline one was last seen"
+        "Glance at the menu bar: 🛜 3 says three devices are online; click it for the list and Disconnect, or Connect when Tailscale is off, opening Tailscale.app first when it isn't running"
       ],
       "requires": [
         "python3",
@@ -738,6 +738,16 @@
           "name": "devices",
           "title": "Tailscale devices",
           "mode": "list"
+        },
+        {
+          "name": "connect",
+          "title": "Connect Tailscale",
+          "mode": "no-view"
+        },
+        {
+          "name": "disconnect",
+          "title": "Disconnect Tailscale",
+          "mode": "no-view"
         }
       ],
       "permissions": {
@@ -749,14 +759,14 @@
       "files": [
         {
           "path": "extension.json",
-          "sha256": "ad54aaa2f315bc136a4be20cf4b46ef2fc2dbd462e2a59c29653da0922f1167c",
-          "size": 1090,
+          "sha256": "8c37bf7c2b314f45711e206227f12576f5150373ecddacfa4e502356dce66c34",
+          "size": 1337,
           "executable": false
         },
         {
           "path": "main.py",
-          "sha256": "96815bcabab76fce74737dc613e4056a0c5c937abc2992e66fd0c1c7c9961fc6",
-          "size": 8377,
+          "sha256": "4870553210bd76123acf76afb9614f14c8b05e1bf1f891c03052f7f0038b2fdf",
+          "size": 13709,
           "executable": true
         }
       ]
