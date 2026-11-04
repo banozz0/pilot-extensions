@@ -720,6 +720,48 @@
       ]
     },
     {
+      "id": "tailscale",
+      "title": "Tailscale",
+      "icon": "🛜",
+      "version": "1.0.0",
+      "description": "See which of your Tailscale devices are online and copy a device's Tailscale IP without opening the Tailscale menu.",
+      "examples": [
+        "Type pi: your Raspberry Pi with its OS, IP and whether it is online; Return copies its 100.x IP",
+        "Type offline: the devices that are not connected now, with when each was last seen"
+      ],
+      "requires": [
+        "python3",
+        "tailscale"
+      ],
+      "commands": [
+        {
+          "name": "devices",
+          "title": "Tailscale devices",
+          "mode": "list"
+        }
+      ],
+      "permissions": {
+        "network": [],
+        "clipboard": true,
+        "files": [],
+        "actions": []
+      },
+      "files": [
+        {
+          "path": "extension.json",
+          "sha256": "817d23560bc1c495e146b7662453fa2de1d95559a68f6fd8500f38355203def4",
+          "size": 640,
+          "executable": false
+        },
+        {
+          "path": "main.py",
+          "sha256": "142525a4e2e50dadec209c3eae66e9005ec4143dc8bc0fe2715d6860aa751a08",
+          "size": 5939,
+          "executable": true
+        }
+      ]
+    },
+    {
       "id": "todo",
       "title": "To-do",
       "icon": "☑️",
