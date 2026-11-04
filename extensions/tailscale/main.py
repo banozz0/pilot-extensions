@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tailscale for Pilot: every device on your tailnet with its OS, Tailscale IP and online state; Return copies the IP.
+Its page lists them online first with counts, and its menu-bar item shows how many are online, its click lists them.
 
 Read only (Pilot 1.1, T8): it runs `tailscale status --json` and nothing else, so it never changes a setting, logs in or
 connects anything. The CLI is the one Tailscale.app installs at /usr/local/bin/tailscale (or one on PATH); it only answers
@@ -16,7 +17,9 @@ import sys
 
 CLI = "/usr/local/bin/tailscale"
 APP = "/Applications/Tailscale.app"
-WAIT = 1.2  # seconds; Pilot stops a list after 2, and a cold python3 takes some of that
+WAIT = {"page": 3.0, "popover": 3.0}  # seconds; Pilot stops a page or popover after 5, a list or bar line after 2
+LIST_WAIT = 1.2  # a cold python3 takes some of those 2 s
+MOST_ROWS = 50  # Pilot draws 50 rows of a list block at most
 NOT_RUNNING = ("Tailscale isn't running", "Open Tailscale.app, then look again")
 OFFLINE_STATES = {
     "Stopped": ("Tailscale is turned off", "Turn it on in Tailscale's menu-bar item, then look again"),
@@ -30,7 +33,7 @@ def send(message):
     sys.stdout.write(json.dumps(message, ensure_ascii=False) + "\n")
 
 
-def status():
+def status(wait=LIST_WAIT):
     """The parsed `tailscale status --json`, or a (title, subtitle) row saying why there is none."""
     cli = shutil.which("tailscale") or CLI
     try:
@@ -42,7 +45,7 @@ def status():
     except OSError:
         return None, NOT_RUNNING
     try:
-        out, _ = proc.communicate(timeout=WAIT)
+        out, _ = proc.communicate(timeout=wait)
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
         proc.communicate()
@@ -111,11 +114,13 @@ def device_item(node, me, now):
     return item, (0 if me else 1 if online else 2, name.lower())
 
 
-def devices(now=None):
-    data, why = status()
-    if why:
-        return [{"title": why[0], "subtitle": why[1], "icon": "🛜",
-                 "actions": [{"type": "open", "url": APP, "title": "Open Tailscale"}]}]
+def reason_row(why):
+    return {"title": why[0], "subtitle": why[1], "icon": "🛜",
+            "actions": [{"type": "open", "url": APP, "title": "Open Tailscale"}]}
+
+
+def device_rows(data, now=None):
+    """(item, online) per device: this Mac, then the online ones, then the offline ones, each by name."""
     now = now or datetime.datetime.now(datetime.timezone.utc)
     rows = []
     if isinstance(data.get("Self"), dict):
@@ -123,7 +128,51 @@ def devices(now=None):
     peers = data.get("Peer") if isinstance(data.get("Peer"), dict) else {}
     rows += [device_item(p, False, now) for p in peers.values() if isinstance(p, dict)]
     rows.sort(key=lambda row: row[1])
-    return [item for item, _ in rows] or [{"title": "No devices on your tailnet", "icon": "🛜"}]
+    return [(item, rank < 2) for item, (rank, _) in rows]
+
+
+def devices(now=None):
+    data, why = status()
+    if why:
+        return [reason_row(why)]
+    return [item for item, _ in device_rows(data, now)] or [{"title": "No devices on your tailnet", "icon": "🛜"}]
+
+
+def lists(rows, most):
+    """An Online list and an Offline list, at most `most` rows in all."""
+    online = [item for item, on in rows if on][:most]
+    offline = [item for item, on in rows if not on][:max(0, most - len(online))]
+    blocks = [{"type": "list", "title": title, "items": items}
+              for title, items in (("Online", online), ("Offline", offline)) if items]
+    return blocks or [{"type": "list", "items": [{"title": "No devices on your tailnet", "icon": "🛜"}]}]
+
+
+def page(run):
+    """Counts, then every device, online ones first."""
+    data, why = status(WAIT["page"])
+    if why:
+        send({"type": "blocks", "blocks": [{"type": "list", "items": [reason_row(why)]}]})
+        return
+    rows = device_rows(data)
+    online = sum(1 for _, on in rows if on)
+    stats = {"type": "stats", "items": [{"label": "Online", "value": str(online), "tone": "fine"},
+                                        {"label": "Offline", "value": str(len(rows) - online)},
+                                        {"label": "Devices", "value": str(len(rows))}]}
+    send({"type": "blocks", "blocks": [stats] + lists(rows, MOST_ROWS)})
+
+
+def bar(run):
+    """🛜 and how many devices are online, this Mac counted; a click (surface popover) lists them."""
+    popover = run.get("surface") == "popover"
+    data, why = status(WAIT["popover"] if popover else LIST_WAIT)
+    if why:
+        blocks = [{"type": "list", "items": [reason_row(why)]}]
+        line = {"type": "bar", "text": "🛜", "tone": "warn", "blocks": blocks}
+    else:
+        rows = device_rows(data)
+        blocks = lists(rows, MOST_ROWS)
+        line = {"type": "bar", "text": "🛜 %d" % sum(1 for _, on in rows if on), "blocks": blocks}
+    send({"type": "blocks", "blocks": blocks} if popover else line)
 
 
 def main():
@@ -132,8 +181,11 @@ def main():
     except ValueError:
         send({"type": "error", "text": "got a run message it could not read"})
         return
-    if run.get("command") == "devices":
+    command = run.get("command")
+    if command == "devices":
         send({"type": "list", "items": devices()})
+    elif command in ("page", "bar"):
+        (page if command == "page" else bar)(run)
     else:
         send({"type": "error", "text": "has no command %s" % run.get("command")})
 

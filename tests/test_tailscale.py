@@ -83,3 +83,31 @@ class TailscaleTests(ExtensionTestCase):
     def test_no_peers_lists_this_mac_alone(self):
         self.answer(dict(FIXTURE, Peer=None))
         self.assertEqual([i["title"] for i in self.devices()], ["Studio Mac"])
+
+    def test_page_counts_and_lists_online_then_offline(self):
+        self.answer()
+        blocks = self.page()
+        self.assertEqual({s["label"]: s["value"] for s in blocks[0]["items"]}, {"Online": "2", "Offline": "2", "Devices": "4"})
+        lists = [(b["title"], [i["title"] for i in b["items"]]) for b in blocks if b["type"] == "list"]
+        self.assertEqual(lists, [("Online", ["Studio Mac", "raspberrypi"]), ("Offline", ["gaming-pc", "Pocket"])])
+        pocket = blocks[2]["items"][1]
+        self.assertEqual(pocket["subtitle"], "iOS · 100.64.0.3 · last seen 2026-01-02")
+        self.assertEqual([a["title"] for a in pocket["actions"]],
+                         ["Copy IP 100.64.0.3", "Copy IPv6 fd7a:115c:a1e0::3", "Copy name pocket.example.ts.net"])
+        self.assertEqual(self.box.shim_calls(), ["tailscale status --json"])
+
+    def test_bar_counts_online_devices_and_its_click_lists_them(self):
+        self.answer()
+        line = self.bar()
+        self.assertEqual(line["text"], "🛜 2")
+        self.assertNotIn("tone", line)
+        popover = self.popover()
+        self.assertEqual([b["title"] for b in popover], ["Online", "Offline"])
+        self.assertEqual([i["title"] for i in popover[0]["items"]], ["Studio Mac", "raspberrypi"])
+
+    def test_bar_and_page_say_when_tailscale_is_not_running(self):
+        self.answer(stdout="failed to connect\n", code=1)
+        line = self.bar()
+        self.assertEqual((line["text"], line["tone"]), ("🛜", "warn"))
+        self.assertEqual(line["blocks"][0]["items"][0]["title"], "Tailscale isn't running")
+        self.assertEqual(self.page()[0]["items"][0]["title"], "Tailscale isn't running")

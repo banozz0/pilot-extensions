@@ -2,13 +2,16 @@
   "id": "tailscale",
   "title": "Tailscale",
   "icon": "🛜",
-  "version": "1.0.0",
-  "description": "See which of your Tailscale devices are online and copy a device's Tailscale IP without opening the Tailscale menu.",
-  "examples": ["Type pi: your Raspberry Pi with its OS, IP and whether it is online; Return copies its 100.x IP", "Type offline: the devices that are not connected now, with when each was last seen"],
+  "version": "1.1.0",
+  "description": "See which of your Tailscale devices are online and copy a device's Tailscale IP or name without opening the Tailscale menu, from Hyper+Space, its own page or the menu bar.",
+  "examples": ["Type pi: your Raspberry Pi with its OS, IP and whether it is online; Return copies its 100.x IP", "Glance at the menu bar: 🛜 3 says three devices are online; click it for the list, online first, each with its IP, and when an offline one was last seen"],
   "runtime": "process",
   "requires": ["python3", "tailscale"],
   "permissions": { "clipboard": true },
+  "surfaces": { "page": { "command": "page", "every": 60 }, "bar": { "command": "bar", "every": 60 } },
   "commands": [
-    { "name": "devices", "title": "Tailscale devices", "mode": "list", "run": "main.py" }
+    { "name": "devices", "title": "Tailscale devices", "mode": "list", "run": "main.py" },
+    { "name": "page", "title": "Tailscale page", "mode": "no-view", "hidden": true, "run": "main.py" },
+    { "name": "bar", "title": "Tailscale in the menu bar", "mode": "no-view", "hidden": true, "run": "main.py" }
   ]
 }
