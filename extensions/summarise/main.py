@@ -11,6 +11,8 @@ those (Q478): the list and the page read the disk and never ask it, and the page
 answer is on its way. Each source is one JSON file in paths.data/items; paths.data/current names the one the page shows.
 The page leads with a box (Sven, 2026-10-31): a link or a file's path pasted, or a document picked with its Choose button,
 and Summarise runs `fetch` on it, as the list's row would.
+`delete` removes one source and `clear-failed` every failed one (P94); a source removed while it is read or summarised
+stays gone, its late answer only saying so.
 `bar` is the menu-bar item (Q485): 📝, with … while a summary is on its way, from the disk alone; its popover, asked on a
 click, offers what is copied (a link, a Finder file or text) as one row whose click summarises it, a box to paste a link
 or text into, and the last summary. Only the popover reads the clipboard, and the AI still runs only on a click.
@@ -80,6 +82,7 @@ class Store:
     def __init__(self, run):
         self.root = (run.get("paths") or {}).get("data") or os.path.join(os.environ.get("TMPDIR", "/tmp"), "summarise")
         self.items = os.path.join(self.root, "items")
+        self.pointer = os.path.join(self.root, "current")
         os.makedirs(self.items, exist_ok=True)
 
     def path(self, item_id, ext=".json"):
@@ -112,15 +115,33 @@ class Store:
 
     def current(self, text=False):
         try:
-            with open(os.path.join(self.root, "current"), encoding="utf-8") as f:
+            with open(self.pointer, encoding="utf-8") as f:
                 return self.load(f.read().strip(), text)
         except OSError:
             return None
 
     def show(self, item):
         """The page shows `item` from now, and it is the newest of the earlier ones."""
-        write_file(os.path.join(self.root, "current"), item["id"])
+        write_file(self.pointer, item["id"])
         self.save(item)
+
+    def remove(self, item_id):
+        for ext in (".txt", ".json"):
+            discard(self.path(item_id, ext))
+
+    def forget(self, ids):
+        """Removes these sources; if the page shows one of them, it moves to the newest left, or to its empty state. The
+        pointer alone moves: `show` would date that source now, and a stale one would count as working again."""
+        shown = self.current()
+        for item_id in ids:
+            self.remove(item_id)
+        if not shown or shown["id"] not in ids:
+            return
+        left = self.earlier()
+        if left:
+            write_file(self.pointer, left[0]["id"])
+        else:
+            discard(self.pointer)
 
     def earlier(self):
         """Every source, newest first; past KEPT the oldest are deleted."""
@@ -131,12 +152,18 @@ class Store:
                 found.append(item)
         found.sort(key=lambda i: i.get("at", 0), reverse=True)
         for old in found[KEPT:]:
-            for ext in (".json", ".txt"):
-                try:
-                    os.remove(self.path(old["id"], ext))
-                except OSError:
-                    pass
+            try:
+                self.remove(old["id"])
+            except OSError:
+                pass
         return found[:KEPT]
+
+
+def discard(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
 
 
 def write_file(path, text):
@@ -459,6 +486,10 @@ def short(source):
     return re.sub(r"^https?://(www\.)?", "", source)[:80]
 
 
+def delete_action(item_id, **fields):
+    return run_action("delete", "Delete", {"id": item_id}, destructive=True, **fields)
+
+
 def start_row(source, title, subtitle, icon, row_id):
     return {"id": row_id, "title": title, "subtitle": subtitle, "icon": icon,
             "actions": [run_action("fetch", "Summarise", {"source": source})]}
@@ -488,7 +519,8 @@ def summarise(run, store):
             continue
         rows.append({"id": "item:" + item["id"], "title": item.get("title") or short(item["source"]), "section": "Earlier",
                      "subtitle": noun(item.get("kind")).capitalize() + " · " + short(item.get("source", "")),
-                     "icon": "🗂️", "actions": [run_action("show", "Open", {"id": item["id"]})]})
+                     "icon": "🗂️", "actions": [run_action("show", "Open", {"id": item["id"]}),
+                                               delete_action(item["id"], key="cmd+delete", stay=True)]})
     if not rows:
         rows.append({"id": "hint", "title": "Copy a link or a file, or type a link or a document's name",
                      "subtitle": "YouTube videos, web pages, PDFs and text documents", "icon": "📝",
@@ -535,12 +567,17 @@ def fetch(run, store):
     store.show(item)
     # The page opens now, so the read shows; its own open action would wait for the read.
     subprocess.run(["open", PAGE], capture_output=True, timeout=5)
+    problem = None
     try:
         item.update(read_source(source, kind))
     except Problem as e:
-        item.update(status="failed", error=str(e))
+        problem = e
+    if not store.load(item_id):  # deleted while it was read: saving now would bring it back
+        return send({"type": "hud", "text": "That source is gone"})
+    if problem:
+        item.update(status="failed", error=str(problem))
         store.save(item)
-        return send({"type": "hud", "text": "Summarise: %s" % e})
+        return send({"type": "hud", "text": "Summarise: %s" % problem})
     item.update(status="summarising", words=len(item["text"].split()))
     store.save(item)
     ask_ai(SUMMARY_TASK % noun(kind), source_text(item), "summarised", {"id": item_id})
@@ -623,6 +660,20 @@ def show(run, store):
     open_item(store, item)
 
 
+def delete(run, store):
+    item = store.load((run.get("context") or {}).get("id", ""))
+    if not item:
+        return send({"type": "hud", "text": "That summary is gone"})
+    store.forget([item["id"]])
+    send({"type": "hud", "text": "Summary deleted"})
+
+
+def clear_failed(run, store):
+    failed = [i["id"] for i in store.earlier() if status_of(i) == "failed"]
+    store.forget(failed)
+    send({"type": "hud", "text": "Cleared %d failed" % len(failed)})
+
+
 def status_of(item):
     """Its status; a read stopped with its run, or an answer that never came back, counts as failed after STALE, so the
     2 s asks stop."""
@@ -693,10 +744,7 @@ def page(run, store):
         blocks = [new_box(), {"type": "markdown", "text":
                   "YouTube videos (from their transcript), web pages, PDFs and text documents. The summary shows here, "
                   "with its full text, Copy, Save as .md and Ask about it."}]
-        others = store.earlier()[:10]
-        if others:
-            blocks.append(earlier_block(others))
-        return send({"type": "blocks", "blocks": blocks})
+        return send({"type": "blocks", "blocks": blocks + earlier_blocks(store.earlier())})
     name, status = noun(item.get("kind")), status_of(item)
     facts = [{"label": label, "value": str(item[key])} for label, key in (("Channel", "channel"), ("Length", "length"))
              if item.get(key)]
@@ -714,8 +762,8 @@ def page(run, store):
         buttons.append({"type": "open", "url": item["source"], "title": "Open document" if item.get("kind") == "doc" else "Open link"})
     if status == "failed":
         buttons.append(run_action("fetch", "Try again", {"source": item["source"]}))
-    if buttons:
-        blocks.append({"type": "buttons", "actions": buttons})
+    buttons.append(delete_action(item["id"]))
+    blocks.append({"type": "buttons", "actions": buttons})
     blocks.append({"type": "section", "title": "Summary · Pilot AI",
                    "blocks": [{"type": "markdown", "text": summary_words(item, status)}]})
     if item.get("text"):
@@ -728,23 +776,34 @@ def page(run, store):
             text = text[:SHOWN] + "\n\n_The rest is in the .md file: Save as .md._"
         blocks.append({"type": "section", "title": "Transcript" if name == "video" else "Full text",
                        "blocks": [{"type": "markdown", "text": text}]})
-    others = [i for i in store.earlier() if i["id"] != item["id"]][:10]
-    if others:
-        blocks.append(earlier_block(others))
+    blocks += earlier_blocks(store.earlier(), item["id"])
     answer = {"type": "blocks", "blocks": blocks}
     if status in ("reading", "summarising") or item.get("asking"):
         answer["refresh"] = 2
     send(answer)
 
 
-def earlier_block(items):
-    return {"type": "list", "title": "Earlier", "items": [
-        {"id": i["id"], "title": i.get("title") or short(i.get("source", "")), "subtitle": noun(i.get("kind")).capitalize(),
-         "actions": [run_action("show", "Show", {"id": i["id"]})]} for i in items]}
+def earlier_row(item):
+    """A row of Earlier: a click shows it; Delete as an inline button, and in `actions` so ⋯ and an older Pilot reach it."""
+    gone = delete_action(item["id"])
+    return {"id": item["id"], "title": item.get("title") or short(item.get("source", "")),
+            "subtitle": noun(item.get("kind")).capitalize(),
+            "actions": [run_action("show", "Show", {"id": item["id"]}), gone], "inline": [dict(gone, icon="xmark")]}
+
+
+def earlier_blocks(items, shown=None):
+    """Clear failed while any source has failed (every kept one, the shown one too), then Earlier without the shown one."""
+    blocks = []
+    if any(status_of(i) == "failed" for i in items):
+        blocks.append({"type": "buttons", "actions": [run_action("clear-failed", "Clear failed", destructive=True)]})
+    others = [i for i in items if i["id"] != shown][:10]
+    if others:
+        blocks.append({"type": "list", "title": "Earlier", "items": [earlier_row(i) for i in others]})
+    return blocks
 
 
 COMMANDS = {"summarise": summarise, "fetch": fetch, "summarised": summarised, "ask": ask, "answered": answered,
-            "save": save, "show": show, "page": page, "bar": bar}
+            "save": save, "show": show, "delete": delete, "clear-failed": clear_failed, "page": page, "bar": bar}
 
 
 def main():
